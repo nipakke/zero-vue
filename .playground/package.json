@@ -1,0 +1,21 @@
+{
+  "name": "@zero-vue/playground",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vp dev .",
+    "typecheck": "vue-tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@rocicorp/zero": "^1.8.0",
+    "vue": "^3.5.0",
+    "@nipakke/zero-vue": "workspace:*"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.8",
+    "typescript": "~5.8.3",
+    "vite-plus": "catalog:",
+    "vue-tsc": "^2.2.8"
+  }
+}

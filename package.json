@@ -1,0 +1,87 @@
+{
+  "name": "@nipakke/zero-vue",
+  "version": "0.0.1",
+  "type": "module",
+  "description": "Thin Vue 3 reactivity adapter over the Zero sync engine",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nipakke/zero-vue.git"
+  },
+  "homepage": "https://github.com/nipakke/zero-vue",
+  "bugs": {
+    "url": "https://github.com/nipakke/zero-vue/issues"
+  },
+  "keywords": [
+    "vue",
+    "vue3",
+    "rocicorp",
+    "zero",
+    "offline-first",
+    "reactivity",
+    "query"
+  ],
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "vp pack",
+    "prepublishOnly": "pnpm build",
+    "test": "vp test run",
+    "test:watch": "vp test",
+    "check-types": "vue-tsc --noEmit",
+    "check:playground": "pnpm build && pnpm --filter @zero-vue/playground typecheck",
+    "playground": "pnpm --filter @zero-vue/playground dev",
+    "format": "vp fmt",
+    "lint": "vp lint"
+  },
+  "devDependencies": {
+    "@arethetypeswrong/core": "^0.18.5",
+    "@rocicorp/zero": "^1.8.0",
+    "@vitejs/plugin-vue": "^6.0.8",
+    "@vitest/coverage-v8": "4.1.10",
+    "@vitest/ui": "4.1.10",
+    "@vue/test-utils": "^2.4.11",
+    "jsdom": "^30.0.1",
+    "publint": "^0.3.23",
+    "typescript": "~5.8.3",
+    "vite": "npm:@voidzero-dev/vite-plus-core@0.2.8",
+    "vite-plus": "catalog:",
+    "vitest": "4.1.10",
+    "vue": "^3.5.41",
+    "vue-tsc": "^2.2.12"
+  },
+  "peerDependencies": {
+    "@rocicorp/zero": ">=1.7.0 <1.9.0",
+    "vue": "^3.3.0"
+  },
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "11.21.0",
+      "onFail": "download"
+    }
+  }
+}
