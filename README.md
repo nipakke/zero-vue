@@ -16,7 +16,7 @@ Thin Vue 3 reactivity adapter over the [Zero](https://zero.rocicorp.dev/) sync e
 | `vue` | `^3.3.0` |
 | `@rocicorp/zero` | `>=1.7.0 <1.9.0` |
 
-The published package ships ESM + CJS with type declarations (`dist/`), and is `sideEffects: false` for tree-shaking.
+The published package ships ESM with type declarations (`dist/`), and is `sideEffects: false` for tree-shaking.
 
 ## Installation
 

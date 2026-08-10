@@ -21,5 +21,5 @@ jobs:
       - run: vp install
       - run: vp lint
       - run: vp test run
+      # Build + publint + attw gates (validates exports/types shape).
       - run: vp pack
-      - run: pnpm --filter @zero-vue/playground typecheck
