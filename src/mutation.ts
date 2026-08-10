@@ -1,7 +1,7 @@
 import {
   computed,
-  getCurrentInstance,
-  onUnmounted,
+  getCurrentScope,
+  onScopeDispose,
   ref,
   toValue,
   type ComputedRef,
@@ -33,16 +33,23 @@ export class MutationTimeoutError extends Error {
 /**
  * Options for one `mutate` call. Passed as the trailing argument to `mutate`;
  * local values override the composable-level `UseMutationOptions` for that
- * call only. (Caveat: a final argument object that has any of these keys is
- * treated as call options, so mutation payloads carrying a `timeout`,
- * `throwOnTimeout`, or `throwOnError` field cannot be passed last.)
+ * call only.
+ *
+ * Detection rule: the final argument is treated as call options only when it
+ * is a plain object whose keys are a subset of `timeout`, `throwOnTimeout`,
+ * and `throwOnError` AND whose values match the expected types (number for
+ * `timeout`, boolean for the flags). A payload that carries any other field,
+ * or these names with different value types, is always passed through to the
+ * mutation untouched. The one remaining ambiguity is a payload that consists
+ * *exactly* of option keys with matching types (e.g. `{timeout: 5000}`) — it
+ * is indistinguishable from options and is treated as options.
  */
 export type MutationCallOptions = {
   /** Max ms to wait for the tracked promise on this call; overrides `UseMutationOptions.timeout`. */
   timeout?: number;
   /** Reject this call's tracked promise when it exceeds `timeout`. */
   throwOnTimeout?: boolean;
-  /** Reject this call's tracked promise when the mutation resolves with an error details object. */
+  /** Reject this call's tracked promise when the mutation resolves with an error details object (default `true`). */
   throwOnError?: boolean;
 };
 
@@ -76,11 +83,13 @@ export type UseMutationOptions = {
   throwOnTimeout?: boolean;
   /**
    * Whether the promise returned by `mutate` should reject when the mutation
-   * resolves with an error details object (`{type: 'error', ...}`). Default:
-   * `false` (the error is reported via the `error` ref, and the call resolves
-   * with the error details). Genuine promise rejections always reject
-   * regardless of this flag. Overridable per call via
-   * `MutationCallOptions.throwOnError`.
+   * resolves with an error details object (`{type: 'error', ...}`) — i.e. the
+   * mutation itself failed (custom mutator threw, zero error, …). Default:
+   * `true` — `await mutate(...)` throws on mutation errors, and the error is
+   * also reported via the `error` ref. Pass `false` to have the call resolve
+   * with the error details instead (the `error` ref still reports it).
+   * Genuine promise rejections always reject regardless of this flag.
+   * Overridable per call via `MutationCallOptions.throwOnError`.
    */
   throwOnError?: boolean;
 };
@@ -100,9 +109,27 @@ export type MutationResult<TArgs extends unknown[]> = {
 /** Internal status of the latest tracked mutation. */
 type MutationStatus = "idle" | "pending" | "error";
 
+/** The only keys a `MutationCallOptions` object may carry. */
+const MUTATION_CALL_OPTION_KEYS = new Set(["timeout", "throwOnTimeout", "throwOnError"]);
+
+/**
+ * Decides whether the trailing `mutate` argument is call options or part of
+ * the mutation payload. Strict on purpose: an object counts as options only
+ * when every key is a known option key AND the values match the option types
+ * (number for `timeout`, boolean for the flags). Anything else — extra
+ * fields, wrong value types, empty objects — is a payload and passes through.
+ */
 function isMutationCallOptions(value: unknown): value is MutationCallOptions {
   if (typeof value !== "object" || value === null) return false;
-  return ["timeout", "throwOnTimeout", "throwOnError"].some((key) => key in value);
+  const keys = Object.keys(value);
+  if (keys.length === 0 || !keys.every((key) => MUTATION_CALL_OPTION_KEYS.has(key))) {
+    return false;
+  }
+  const options = value as Record<string, unknown>;
+  if ("timeout" in options && typeof options.timeout !== "number") return false;
+  if ("throwOnTimeout" in options && typeof options.throwOnTimeout !== "boolean") return false;
+  if ("throwOnError" in options && typeof options.throwOnError !== "boolean") return false;
+  return true;
 }
 
 /**
@@ -134,13 +161,14 @@ function isMutationCallOptions(value: unknown): value is MutationCallOptions {
  * `MutatorResult` promises are left to settle on their own.
  *
  * The promise returned by `mutate` is the tracked promise with the call's
- * throw policy applied: with `throwOnTimeout` it rejects with a
- * `MutationTimeoutError` on timeout, and with `throwOnError` it rejects when
- * the mutation resolves with error details. Both default to `false`, so by
- * default the returned promise behaves like Zero's own tracked promise
- * (resolves with the `MutatorResultDetails`). Options can be set globally on
- * `useMutation` or per call as the trailing `mutate` argument — per-call
- * values win.
+ * throw policy applied: with `throwOnTimeout` (default `false`) it rejects
+ * with a `MutationTimeoutError` on timeout, and with `throwOnError` (default
+ * `true`) it rejects when the mutation resolves with error details — so by
+ * default `await mutate(...)` throws when the mutation itself fails. Pass
+ * `throwOnError: false` to resolve with the `MutatorResultDetails` (the
+ * `error` ref still reports the failure either way). Options can be set
+ * globally on `useMutation` or per call as the trailing `mutate` argument —
+ * per-call values win.
  */
 export function useMutation<
   S extends BaseDefaultSchema = DefaultSchema,
@@ -158,7 +186,7 @@ export function useMutation<
   const awaitMode = computed(() => optionsRef.value?.awaitMode ?? "client");
   const timeoutMs = computed(() => optionsRef.value?.timeout ?? DEFAULT_MUTATION_TIMEOUT_MS);
   const throwOnTimeout = computed(() => optionsRef.value?.throwOnTimeout ?? false);
-  const throwOnError = computed(() => optionsRef.value?.throwOnError ?? false);
+  const throwOnError = computed(() => optionsRef.value?.throwOnError ?? true);
 
   const _status = ref<MutationStatus>("idle");
   const _error = ref<Error | null>(null);
@@ -168,10 +196,19 @@ export function useMutation<
   // clobber a newer mutation's state (or `reset`'s idle state).
   let mutationId = 0;
 
+  // Timers of in-flight timeout races, cleared when the scope is disposed so
+  // they don't outlive the composable (a settled race's own finally removes
+  // its timer from the set).
+  const pendingTimers = new Set<number>();
+
   let disposed = false;
-  if (getCurrentInstance()) {
-    onUnmounted(() => {
+  if (getCurrentScope()) {
+    onScopeDispose(() => {
       disposed = true;
+      for (const id of pendingTimers) {
+        clearTimeout(id);
+      }
+      pendingTimers.clear();
     });
   }
 
@@ -206,7 +243,9 @@ export function useMutation<
       tracked = promise;
     } else {
       const timer = new Promise<never>((_, reject) => {
-        timerId = setTimeout(() => reject(new MutationTimeoutError(timeout)), timeout);
+        const id = setTimeout(() => reject(new MutationTimeoutError(timeout)), timeout);
+        timerId = id;
+        pendingTimers.add(id);
       });
       tracked = Promise.race([promise, timer]);
     }
@@ -230,6 +269,9 @@ export function useMutation<
       })
       .finally(() => {
         clearTimeout(timerId);
+        if (timerId !== undefined) {
+          pendingTimers.delete(timerId);
+        }
         if (disposed || id !== mutationId) return;
         if (_status.value === "pending") _status.value = "idle";
       });

@@ -33,7 +33,25 @@ const mutators = defineMutatorsWithSchema({
   hang: defineMutator<{ id: number; name: string }, typeof schema>(async () => {
     await new Promise(() => {});
   }),
+  // Captures the raw args it receives (so tests can assert payload
+  // pass-through), then inserts the row.
+  record: defineMutator<
+    {
+      id: number;
+      name: string;
+      timeout?: number;
+      throwOnTimeout?: string;
+      throwOnError?: boolean;
+    },
+    typeof schema
+  >(async ({ tx, args }) => {
+    receivedArgs.push(args);
+    await tx.mutate.item.insert({ id: args.id, name: args.name });
+  }),
 });
+
+// Args captured by the `record` mutator, for payload pass-through assertions.
+const receivedArgs: unknown[] = [];
 
 // Strips the `Symbol(rc)` row-context symbols Zero attaches to rows.
 const rows = (d: unknown) => JSON.parse(JSON.stringify(d)) as { id: number; name: string }[];
@@ -105,7 +123,7 @@ describe("useMutation", () => {
     expect(error.value?.message).toContain("50ms");
   });
 
-  test("handles MutatorResultDetails error type (resolved but error)", async () => {
+  test("rejects by default when the mutation resolves with error details", async () => {
     const z = new Zero({
       server: null,
       userID: "test",
@@ -119,11 +137,36 @@ describe("useMutation", () => {
       mutators.fail(item),
     );
 
-    // The client promise resolves with `{type: 'error', error: {message}}`
-    // rather than rejecting; the error still surfaces via `error`.
-    await mutate({ id: 1, name: "x" }).client;
+    // Zero normalizes custom-mutator failures into *resolved* error details
+    // (`{type: 'error', error: {message}}`), so without `throwOnError: false`
+    // the call's promise rejects and the error also surfaces via `error`.
+    await expect(mutate({ id: 1, name: "x" }).client).rejects.toThrow("boom");
     await flush();
 
+    expect(error.value?.message).toBe("boom");
+    expect(isPending.value).toBe(false);
+  });
+
+  test("throwOnError: false resolves with the error details instead of rejecting", async () => {
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+      mutators,
+    });
+
+    const { mutate, isPending, error } = useMutation(
+      z,
+      (item: { id: number; name: string }) => mutators.fail(item),
+      { throwOnError: false },
+    );
+
+    const result = await mutate({ id: 1, name: "x" }).client;
+    await flush();
+
+    expect(result.type).toBe("error");
     expect(error.value?.message).toBe("boom");
     expect(isPending.value).toBe(false);
   });
@@ -279,6 +322,61 @@ describe("useMutation", () => {
     expect(outcome).toBe("pending");
   });
 
+  test("passes a payload containing a timeout-like field through to the mutator", async () => {
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+      mutators,
+    });
+
+    // Regression: the old option detection treated any trailing object with a
+    // `timeout` key as call options, silently dropping the field from the
+    // payload. `{id, name, timeout}` has keys beyond the option set, so it
+    // must arrive at the mutator intact.
+    receivedArgs.length = 0;
+    const { mutate, error } = useMutation(
+      z,
+      (item: { id: number; name: string; timeout: number }) => mutators.record(item),
+    );
+
+    const result = mutate({ id: 7, name: "timed", timeout: 123 });
+    await result.client;
+    await flush();
+
+    expect(error.value).toBeNull();
+    expect(receivedArgs).toEqual([{ id: 7, name: "timed", timeout: 123 }]);
+    expect(rows(await z.run(createBuilder(schema).item))).toEqual([{ id: 7, name: "timed" }]);
+  });
+
+  test("passes a payload whose option-named keys have the wrong value types", async () => {
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+      mutators,
+    });
+
+    // `throwOnTimeout` here is a string, not a boolean — not valid call
+    // options, so the whole object must reach the mutator as a payload.
+    receivedArgs.length = 0;
+    const { mutate, error } = useMutation(
+      z,
+      (item: { id: number; name: string; throwOnTimeout: string }) => mutators.record(item),
+    );
+
+    const result = mutate({ id: 8, name: "flag", throwOnTimeout: "yes" });
+    await result.client;
+    await flush();
+
+    expect(error.value).toBeNull();
+    expect(receivedArgs).toEqual([{ id: 8, name: "flag", throwOnTimeout: "yes" }]);
+  });
+
   test("works outside a component (no onUnmounted guard)", async () => {
     const z = new Zero({
       server: null,
@@ -289,8 +387,8 @@ describe("useMutation", () => {
       mutators,
     });
 
-    // getCurrentInstance() returns null outside setup(); useMutation must not
-    // register onUnmounted and must still track mutations.
+    // getCurrentScope() returns null outside setup()/effectScope(); useMutation
+    // must not register onScopeDispose and must still track mutations.
     const { mutate, isPending } = useMutation(z, (item: { id: number; name: string }) =>
       mutators.addItem(item),
     );
@@ -437,6 +535,7 @@ describe("useMutation — reset", () => {
     const { mutate, isPending, error, reset } = useMutation(
       z,
       (item: { id: number; name: string }) => mutators.fail(item),
+      { throwOnError: false },
     );
 
     await mutate({ id: 1, name: "x" }).client;
