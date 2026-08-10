@@ -1,6 +1,6 @@
 {
   "name": "@nipakke/zero-vue",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Thin Vue 3 reactivity adapter over the Zero sync engine",
   "keywords": [
     "offline-first",
