@@ -3,6 +3,7 @@ import { nextTick, shallowRef, watchEffect } from "vue";
 import { mount } from "@vue/test-utils";
 import { defineComponent } from "vue";
 import { useConnectionState } from "../src/connection-state.ts";
+import { createBindings } from "../src/create-bindings.ts";
 import { Zero, createSchema, table, string, number } from "@rocicorp/zero";
 
 const schema = createSchema({
@@ -65,5 +66,32 @@ describe("useConnectionState", () => {
     // type, but the ref should still reflect the new instance's state.
     expect(capturedName).toBeDefined();
     expect(capturedName).toBe(nameA); // same "disconnected" state name
+  });
+
+  test("createBindings exposes bound useConnectionState and useZero", async () => {
+    const z = new Zero({ server: null, userID: "test", schema, kvStore: "mem" });
+    const { useConnectionState, useZero } = createBindings(z);
+
+    let capturedState: unknown;
+    let capturedZeroId: unknown;
+
+    const Child = defineComponent({
+      setup() {
+        const state = useConnectionState();
+        const zRef = useZero();
+        watchEffect(() => {
+          capturedState = state.value.name;
+          capturedZeroId = zRef.value.userID;
+        });
+        return () => null;
+      },
+    });
+    mount(Child);
+    await nextTick();
+
+    // Bound useConnectionState tracks the shared zero.
+    expect(capturedState).toBeTypeOf("string");
+    // Bound useZero resolves the shared zero's value.
+    expect(capturedZeroId).toBe("test");
   });
 });

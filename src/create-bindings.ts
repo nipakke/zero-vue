@@ -1,4 +1,4 @@
-import { computed, toValue, type MaybeRefOrGetter } from "vue";
+import { computed, toValue, type ComputedRef, type MaybeRefOrGetter, type Ref } from "vue";
 import {
   useQuery,
   type QueryResult,
@@ -6,9 +6,11 @@ import {
   type UseQueryOptions,
 } from "./query.ts";
 import { useMutation, type MutationResult, type UseMutationOptions } from "./mutation.ts";
+import { useConnectionState } from "./connection-state.ts";
 import type {
   BaseDefaultContext,
   BaseDefaultSchema,
+  ConnectionState,
   CustomMutatorDefs,
   DefaultContext,
   DefaultSchema,
@@ -96,6 +98,17 @@ type BoundMutationContext<MRD extends MutatorDefinitions, S extends BaseDefaultS
  * ```ts
  * const { useMutation } = createBindings(zero);
  * const { mutate } = useMutation((_, item) => myMutators.addItem(item));
+ * ```
+ *
+ * The returned `useConnectionState` is the {@link useConnectionState}
+ * composable pre-bound to the shared zero (call with no arguments). The
+ * returned `useZero` exposes the shared reactive zero itself as a read-only
+ * `ComputedRef`, so components can read the current instance directly:
+ *
+ * ```ts
+ * const { useConnectionState, useZero } = createBindings(zero);
+ * const state = useConnectionState(); // Ref<ConnectionState>
+ * const z = useZero(); // ComputedRef<Zero>
  * ```
  *
  * All returned composables share the same reactive zero, so when a reactive
@@ -207,5 +220,21 @@ export function createBindings<
     );
   }
 
-  return { useQuery: query, useMutation: mutation };
+  // The bound useConnectionState: tracks the shared zero's connection state,
+  // re-subscribing when the (possibly reactive) zero is swapped.
+  function connectionState(): Ref<ConnectionState> {
+    return useConnectionState(sharedZero);
+  }
+
+  // The shared reactive zero itself, for direct access in components.
+  function currentZero(): ComputedRef<Zero<S, MD, Context>> {
+    return sharedZero;
+  }
+
+  return {
+    useQuery: query,
+    useMutation: mutation,
+    useConnectionState: connectionState,
+    useZero: currentZero,
+  };
 }
