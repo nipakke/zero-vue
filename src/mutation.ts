@@ -24,9 +24,21 @@ export const DEFAULT_MUTATION_TIMEOUT_MS = 5_000;
 
 /** Set as `error` when the tracked promise exceeds `timeout`. Checkable via `instanceof`. */
 export class MutationTimeoutError extends Error {
-  readonly name = "MutationTimeoutError";
   constructor(ms: number) {
     super(`Mutation timed out after ${ms}ms`);
+  }
+}
+
+/**
+ * Set as `error` when the mutation itself failed — it resolved with Zero
+ * error details (`{type: 'error', ...}`) or its promise rejected. Checkable
+ * via `instanceof`, alongside `MutationTimeoutError` for timeouts. When the
+ * failure was normalized into resolved error details, `cause` carries Zero's
+ * raw `{type: 'app' | 'zero', message, details?}` object.
+ */
+export class MutationError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
   }
 }
 
@@ -92,6 +104,20 @@ export type UseMutationOptions = {
    * Overridable per call via `MutationCallOptions.throwOnError`.
    */
   throwOnError?: boolean;
+  /**
+   * Observer called whenever a mutation fails — either the tracked promise
+   * timed out or the mutation itself failed. Receives the same branded
+   * `Error` that is set as the composable's `error` ref at that moment:
+   * `instanceof MutationTimeoutError` when the tracked promise exceeded
+   * `timeout`, `instanceof MutationError` when the mutation itself failed
+   * (genuine rejections pass through as-is). Fires regardless of
+   * `throwOnTimeout`/`throwOnError` — it is a pure observer and does not
+   * change what `mutate` returns or what `error` holds. Typical uses:
+   * analytics, toasts, logging. When the composable comes from
+   * `createBindings`, the bindings-level `onMutationError` fires too, after
+   * this one.
+   */
+  onMutationError?: (error: Error) => void;
 };
 
 /** Return shape of `useMutation`. */
@@ -169,6 +195,11 @@ function isMutationCallOptions(value: unknown): value is MutationCallOptions {
  * `error` ref still reports the failure either way). Options can be set
  * globally on `useMutation` or per call as the trailing `mutate` argument —
  * per-call values win.
+ *
+ * `UseMutationOptions.onMutationError` observes every failure — timeouts and
+ * mutation errors alike — receiving the same branded `Error` that is set on
+ * the `error` ref (`instanceof MutationTimeoutError` vs `instanceof
+ * MutationError` tells the two apart), without affecting the throw policy.
  */
 export function useMutation<
   S extends BaseDefaultSchema = DefaultSchema,
@@ -250,22 +281,41 @@ export function useMutation<
       tracked = Promise.race([promise, timer]);
     }
 
+    // Failure reporting: sets the state refs and notifies the
+    // `UseMutationOptions.onMutationError` observer (composed by
+    // `createBindings` to also fire the bindings-level callback, local
+    // first). Observer throws are contained — they must not break the
+    // tracking chain or double-fire via the catch handler.
+    const report = (error: Error) => {
+      _error.value = error;
+      _status.value = "error";
+      const callback = optionsRef.value?.onMutationError;
+      if (callback) {
+        try {
+          callback(error);
+        } catch (e) {
+          console.error("onMutationError callback threw", e);
+        }
+      }
+    };
+
     // Attach the tracking chain to `tracked` (never the bare `promise`), so
     // the timeout race is observed and the timer rejection is always handled.
     // The throw policy only shapes the returned promise, not this state
-    // tracking.
+    // tracking. Failures are branded so consumers can tell them apart:
+    // `MutationTimeoutError` for timeouts (only the race produces it),
+    // `MutationError` for resolved error details, as-is for genuine
+    // rejections.
     tracked
       .then((details) => {
         if (disposed || id !== mutationId) return;
         if (details.type === "error") {
-          _error.value = new Error(details.error.message);
-          _status.value = "error";
+          report(new MutationError(details.error.message, { cause: details.error }));
         }
       })
       .catch((e: unknown) => {
         if (disposed || id !== mutationId) return;
-        _error.value = e instanceof Error ? e : new Error(String(e));
-        _status.value = "error";
+        report(e instanceof Error ? e : new Error(String(e)));
       })
       .finally(() => {
         clearTimeout(timerId);
@@ -284,14 +334,14 @@ export function useMutation<
     if (throwOnTimeoutCall) {
       returned = tracked.then((details) => {
         if (throwOnErrorCall && details.type === "error") {
-          throw new Error(details.error.message);
+          throw new MutationError(details.error.message, { cause: details.error });
         }
         return details;
       });
     } else if (throwOnErrorCall) {
       returned = promise.then((details) => {
         if (details.type === "error") {
-          throw new Error(details.error.message);
+          throw new MutationError(details.error.message, { cause: details.error });
         }
         return details;
       });

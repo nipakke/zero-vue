@@ -11,6 +11,7 @@ export {
 export {
   useMutation,
   MutationTimeoutError,
+  MutationError,
   DEFAULT_MUTATION_TIMEOUT_MS,
   type UseMutationOptions,
   type MutationCallOptions,

@@ -1,5 +1,10 @@
 import { describe, expect, test } from "vite-plus/test";
-import { useMutation, MutationTimeoutError, DEFAULT_MUTATION_TIMEOUT_MS } from "../src/mutation.ts";
+import {
+  useMutation,
+  MutationTimeoutError,
+  MutationError,
+  DEFAULT_MUTATION_TIMEOUT_MS,
+} from "../src/mutation.ts";
 import { createBindings } from "../src/create-bindings.ts";
 import {
   Zero,
@@ -194,6 +199,84 @@ describe("useMutation", () => {
 
     expect(isPending.value).toBe(false);
     expect(error.value).toBeInstanceOf(MutationTimeoutError);
+  });
+
+  test("onMutationError fires with kind 'mutation' when the mutation fails", async () => {
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+      mutators,
+    });
+
+    const errors: Error[] = [];
+    const { mutate, error } = useMutation(
+      z,
+      (item: { id: number; name: string }) => mutators.fail(item),
+      { onMutationError: (e) => errors.push(e) },
+    );
+
+    await expect(mutate({ id: 1, name: "x" }).client).rejects.toThrow("boom");
+    await flush();
+
+    // The observer receives the same branded error as the `error` ref, with
+    // Zero's raw error details attached as `cause`.
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toBeInstanceOf(MutationError);
+    expect(errors[0]?.message).toBe("boom");
+    expect((errors[0]?.cause as { message?: string } | undefined)?.message).toBe("boom");
+    expect(error.value).toBe(errors[0]);
+  });
+
+  test("onMutationError does not fire on success", async () => {
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+      mutators,
+    });
+
+    const errors: Error[] = [];
+    const { mutate, error } = useMutation(
+      z,
+      (item: { id: number; name: string }) => mutators.addItem(item),
+      { onMutationError: (e) => errors.push(e) },
+    );
+
+    await mutate({ id: 1, name: "alpha" }).client;
+    await flush();
+
+    expect(errors).toHaveLength(0);
+    expect(error.value).toBeNull();
+  });
+
+  test("onMutationError receives a MutationTimeoutError when the tracked promise times out", async () => {
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+      mutators,
+    });
+
+    const errors: Error[] = [];
+    const { mutate, error } = useMutation(
+      z,
+      (item: { id: number; name: string }) => mutators.hang(item),
+      { timeout: 50, onMutationError: (e) => errors.push(e) },
+    );
+
+    mutate({ id: 1, name: "x" });
+    await new Promise((r) => setTimeout(r, 100)); // > 50ms timeout
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toBeInstanceOf(MutationTimeoutError);
+    expect(error.value).toBe(errors[0]);
   });
 
   test("default timeout is 5 seconds", () => {
@@ -518,6 +601,111 @@ describe("createBindings", () => {
 
     // The mutate-only form still works.
     useMutation((_, item: { id: number; name: string }) => mutators.addItem(item));
+  });
+
+  test("bindings-level onMutationError fires on bound mutation failure", async () => {
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+      mutators,
+    });
+
+    const errors: Error[] = [];
+    const { useMutation } = createBindings(z, {
+      mutators,
+      onMutationError: (e) => errors.push(e),
+    });
+    const { mutate } = useMutation(({ mutators }, item: { id: number; name: string }) =>
+      mutators.fail(item),
+    );
+
+    await expect(mutate({ id: 1, name: "x" }).client).rejects.toThrow("boom");
+    await flush();
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toBeInstanceOf(MutationError);
+    expect(errors[0]?.message).toBe("boom");
+  });
+
+  test("local and bindings-level onMutationError both fire, local first", async () => {
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+      mutators,
+    });
+
+    const order: string[] = [];
+    const { useMutation } = createBindings(z, {
+      mutators,
+      onMutationError: () => order.push("global"),
+    });
+    const { mutate } = useMutation(
+      ({ mutators }, item: { id: number; name: string }) => mutators.fail(item),
+      { onMutationError: () => order.push("local") },
+    );
+
+    await expect(mutate({ id: 1, name: "x" }).client).rejects.toThrow("boom");
+    await flush();
+
+    expect(order).toEqual(["local", "global"]);
+  });
+
+  test("bound useMutation with only a local onMutationError fires once", async () => {
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+      mutators,
+    });
+
+    // No bindings-level observer: the composed callback must skip the global
+    // call and fire exactly once.
+    const errors: Error[] = [];
+    const { useMutation } = createBindings(z, { mutators });
+    const { mutate } = useMutation(
+      ({ mutators }, item: { id: number; name: string }) => mutators.fail(item),
+      { onMutationError: (e) => errors.push(e) },
+    );
+
+    await expect(mutate({ id: 1, name: "x" }).client).rejects.toThrow("boom");
+    await flush();
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toBeInstanceOf(MutationError);
+  });
+
+  test("bound useMutation honors getter options through the composition", async () => {
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+      mutators,
+    });
+
+    // The composed options wrapper must resolve a getter-form options
+    // argument just like the raw composable does.
+    const errors: Error[] = [];
+    const { useMutation } = createBindings(z, { mutators });
+    const { mutate } = useMutation(
+      ({ mutators }, item: { id: number; name: string }) => mutators.fail(item),
+      () => ({ onMutationError: (e) => errors.push(e) }),
+    );
+
+    await expect(mutate({ id: 1, name: "x" }).client).rejects.toThrow("boom");
+    await flush();
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toBeInstanceOf(MutationError);
   });
 });
 
