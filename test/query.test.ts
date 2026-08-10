@@ -2,7 +2,16 @@ import { describe, expect, test } from "vite-plus/test";
 import { nextTick, ref, shallowRef } from "vue";
 import { useQuery, type UseQueryOptions } from "../src/query.ts";
 import { createBindings } from "../src/create-bindings.ts";
-import { Zero, createSchema, table, string, number, createBuilder } from "@rocicorp/zero";
+import {
+  Zero,
+  createSchema,
+  table,
+  string,
+  number,
+  createBuilder,
+  defineQuery,
+  defineQueries,
+} from "@rocicorp/zero";
 
 const schema = createSchema({
   tables: [table("item").columns({ id: number(), name: string() }).primaryKey("id")],
@@ -106,6 +115,41 @@ describe("createBindings", () => {
     expect(rows.value).toBeUndefined();
     expect(status.value).toBe("disabled");
     expect(error.value).toBeUndefined();
+  });
+
+  test("binds a query registry and resolves queries via a registry getter", async () => {
+    const z = new Zero({ server: null, userID: "test", schema, kvStore: "mem" });
+    await z.mutate.item.insert({ id: 1, name: "alpha" });
+    await z.mutate.item.insert({ id: 2, name: "beta" });
+
+    const zql = createBuilder(schema);
+    const queries = defineQueries({
+      all: defineQuery(() => zql.item),
+    });
+
+    const { query } = createBindings(z, { queries });
+    const { data: rows } = query((q) => q.all());
+
+    expect(JSON.parse(JSON.stringify(rows.value))).toEqual([
+      { id: 1, name: "alpha" },
+      { id: 2, name: "beta" },
+    ]);
+  });
+
+  test("registry getter form is rejected when no registry is bound", () => {
+    const z = new Zero({ server: null, userID: "test", schema, kvStore: "mem" });
+    const { query } = createBindings(z);
+
+    // Without a registry the signal is zero-argument, so a registry-taking
+    // callback must not be assignable to it. Checked at the type level via the
+    // `@ts-expect-error` — assigning to `query`'s signal type never invokes the
+    // composable, so this runs without dereferencing the unbound registry.
+    // @ts-expect-error - no registry bound, so a registry-taking signal is rejected.
+    const _rejected: Parameters<typeof query>[0] = (q) => q.all();
+    expect(_rejected).toBeTypeOf("function");
+
+    // The zero-argument form still works.
+    query(() => createBuilder(schema).item);
   });
 });
 
