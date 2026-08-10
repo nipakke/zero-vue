@@ -3,7 +3,7 @@ import { computed, ref } from "vue";
 import { type UseQueryOptions } from "@nipakke/zero-vue";
 import { createBuilder } from "@rocicorp/zero";
 import { schema, type ItemRow } from "../schema.ts";
-import { zero, query } from "../bindings.ts";
+import { zero, useQuery } from "../bindings.ts";
 import QueryInspector from "./QueryInspector.vue";
 
 // --- Interactive inputs that drive the query signal ------------------------
@@ -35,12 +35,12 @@ const querySignal = () => {
   return q;
 };
 
-const { data: rows, status } = query(querySignal, () => ({ ttl: ttl.value }));
+const { data: rows, status } = useQuery(querySignal, () => ({ ttl: ttl.value }));
 
 // --- Stats via three independent query calls ----------------------------------
-const { data: allRows } = query(() => createBuilder(schema).item);
-const { data: activeRows } = query(() => createBuilder(schema).item.where("done", false));
-const { data: doneRows } = query(() => createBuilder(schema).item.where("done", true));
+const { data: allRows } = useQuery(() => createBuilder(schema).item);
+const { data: activeRows } = useQuery(() => createBuilder(schema).item.where("done", false));
+const { data: doneRows } = useQuery(() => createBuilder(schema).item.where("done", true));
 
 const total = computed(() => allRows.value?.length ?? 0);
 const active = computed(() => activeRows.value?.length ?? 0);

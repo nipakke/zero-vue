@@ -36,19 +36,19 @@ type BoundQueries<QD extends QueryDefinitions, S extends BaseDefaultSchema> =
  * Creates a set of zero-bound composables for a given Zero instance.
  *
  * Call once per app with your `zero` (a plain `Zero`, `shallowRef`, or getter —
- * any `MaybeRefOrGetter`). The returned `query` is `useQuery` with the zero
- * pre-bound, so the zero is passed once instead of on every call.
+ * any `MaybeRefOrGetter`). The returned `useQuery` is the `useQuery` composable
+ * with the zero pre-bound, so the zero is passed once instead of on every call.
  *
  * Optionally pass a `{ queries }` options object (the `queries` registry comes
  * from `defineQueries`) as the second argument. When provided, the returned
- * `query` also accepts a getter that receives that registry:
+ * `useQuery` also accepts a getter that receives that registry:
  *
  * ```ts
- * const { query } = createBindings(zero, { queries });
- * query((q) => q.allItems());
+ * const { useQuery } = createBindings(zero, { queries });
+ * useQuery((q) => q.allItems());
  * ```
  *
- * When no registry is given, `query` only takes the zero-argument getter form.
+ * When no registry is given, `useQuery` only takes the zero-argument getter form.
  *
  * All returned composables share the same reactive zero, so when a reactive
  * zero is replaced every bound view tears down and re-materializes against the
@@ -136,5 +136,5 @@ export function createBindings<
     );
   }
 
-  return { query };
+  return { useQuery: query };
 }

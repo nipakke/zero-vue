@@ -75,8 +75,8 @@ describe("createBindings", () => {
     await z.mutate.item.insert({ id: 1, name: "alpha" });
     await z.mutate.item.insert({ id: 2, name: "beta" });
 
-    const { query } = createBindings(z);
-    const { data: rows } = query(() => createBuilder(schema).item);
+    const { useQuery } = createBindings(z);
+    const { data: rows } = useQuery(() => createBuilder(schema).item);
 
     expect(JSON.parse(JSON.stringify(rows.value))).toEqual([
       { id: 1, name: "alpha" },
@@ -89,8 +89,8 @@ describe("createBindings", () => {
     await zeroA.mutate.item.insert({ id: 1, name: "from-a" });
 
     const zeroRef = shallowRef<typeof zeroA>(zeroA);
-    const { query } = createBindings(zeroRef);
-    const { data: rows } = query(() => createBuilder(schema).item);
+    const { useQuery } = createBindings(zeroRef);
+    const { data: rows } = useQuery(() => createBuilder(schema).item);
 
     // Initially reflects zeroA.
     expect(JSON.parse(JSON.stringify(rows.value))).toEqual([{ id: 1, name: "from-a" }]);
@@ -109,8 +109,8 @@ describe("createBindings", () => {
   test("returns undefined data and disabled status for falsy/disabled query", async () => {
     const z = new Zero({ server: null, userID: "test", schema, kvStore: "mem" });
 
-    const { query } = createBindings(z);
-    const { data: rows, status, error } = query(() => undefined as never);
+    const { useQuery } = createBindings(z);
+    const { data: rows, status, error } = useQuery(() => undefined as never);
 
     expect(rows.value).toBeUndefined();
     expect(status.value).toBe("disabled");
@@ -127,8 +127,8 @@ describe("createBindings", () => {
       all: defineQuery(() => zql.item),
     });
 
-    const { query } = createBindings(z, { queries });
-    const { data: rows } = query((q) => q.all());
+    const { useQuery } = createBindings(z, { queries });
+    const { data: rows } = useQuery((q) => q.all());
 
     expect(JSON.parse(JSON.stringify(rows.value))).toEqual([
       { id: 1, name: "alpha" },
@@ -138,18 +138,18 @@ describe("createBindings", () => {
 
   test("registry getter form is rejected when no registry is bound", () => {
     const z = new Zero({ server: null, userID: "test", schema, kvStore: "mem" });
-    const { query } = createBindings(z);
+    const { useQuery } = createBindings(z);
 
     // Without a registry the signal is zero-argument, so a registry-taking
     // callback must not be assignable to it. Checked at the type level via the
     // `@ts-expect-error` — assigning to `query`'s signal type never invokes the
     // composable, so this runs without dereferencing the unbound registry.
     // @ts-expect-error - no registry bound, so a registry-taking signal is rejected.
-    const _rejected: Parameters<typeof query>[0] = (q) => q.all();
+    const _rejected: Parameters<typeof useQuery>[0] = (q) => q.all();
     expect(_rejected).toBeTypeOf("function");
 
     // The zero-argument form still works.
-    query(() => createBuilder(schema).item);
+    useQuery(() => createBuilder(schema).item);
   });
 });
 
