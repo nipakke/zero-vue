@@ -51,7 +51,11 @@ const doneOnly = ref(false);
 // Build the base query once; chaining returns a new builder each time.
 const base = createBuilder(schema).item;
 
-const { data: items, status, error } = useQuery(() => {
+const {
+  data: items,
+  status,
+  error,
+} = useQuery(() => {
   let q = base;
   if (doneOnly.value) q = q.where("done", true);
   return q.orderBy("createdAt", "desc");

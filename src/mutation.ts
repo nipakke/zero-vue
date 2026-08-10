@@ -156,9 +156,7 @@ export function useMutation<
   const optionsRef = computed(() => toValue(options));
 
   const awaitMode = computed(() => optionsRef.value?.awaitMode ?? "client");
-  const timeoutMs = computed(
-    () => optionsRef.value?.timeout ?? DEFAULT_MUTATION_TIMEOUT_MS,
-  );
+  const timeoutMs = computed(() => optionsRef.value?.timeout ?? DEFAULT_MUTATION_TIMEOUT_MS);
   const throwOnTimeout = computed(() => optionsRef.value?.throwOnTimeout ?? false);
   const throwOnError = computed(() => optionsRef.value?.throwOnError ?? false);
 
@@ -208,10 +206,7 @@ export function useMutation<
       tracked = promise;
     } else {
       const timer = new Promise<never>((_, reject) => {
-        timerId = setTimeout(
-          () => reject(new MutationTimeoutError(timeout)),
-          timeout,
-        );
+        timerId = setTimeout(() => reject(new MutationTimeoutError(timeout)), timeout);
       });
       tracked = Promise.race([promise, timer]);
     }

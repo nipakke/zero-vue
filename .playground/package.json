@@ -8,9 +8,9 @@
     "typecheck": "vue-tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@nipakke/zero-vue": "workspace:*",
     "@rocicorp/zero": "^1.8.0",
-    "vue": "^3.5.0",
-    "@nipakke/zero-vue": "workspace:*"
+    "vue": "^3.5.0"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.8",

@@ -47,20 +47,17 @@ const active = computed(() => activeRows.value?.length ?? 0);
 const done = computed(() => doneRows.value?.length ?? 0);
 
 // --- Mutations via useMutation -------------------------------------------------
-const { mutate: insertItem, isPending: isAdding } = useMutation(
-  ({ mutators }, title: string) => {
-    const id = Date.now();
-    return mutators.addItem({ id, title, done: false, createdAt: id });
-  },
+const { mutate: insertItem, isPending: isAdding } = useMutation(({ mutators }, title: string) => {
+  const id = Date.now();
+  return mutators.addItem({ id, title, done: false, createdAt: id });
+});
+
+const { mutate: toggleMutate } = useMutation(({ mutators }, args: { id: number; done: boolean }) =>
+  mutators.toggleItem(args),
 );
 
-const { mutate: toggleMutate } = useMutation(
-  ({ mutators }, args: { id: number; done: boolean }) =>
-    mutators.toggleItem(args),
-);
-
-const { mutate: deleteMutate } = useMutation(
-  ({ mutators }, id: number) => mutators.deleteItem({ id }),
+const { mutate: deleteMutate } = useMutation(({ mutators }, id: number) =>
+  mutators.deleteItem({ id }),
 );
 
 const addItem = () => {
@@ -103,11 +100,7 @@ const markAllDone = () => {
         placeholder="What needs doing?"
         @keyup.enter="addItem"
       />
-      <button
-        class="btn btn-primary"
-        :disabled="!newTitle.trim() || isAdding"
-        @click="addItem"
-      >
+      <button class="btn btn-primary" :disabled="!newTitle.trim() || isAdding" @click="addItem">
         {{ isAdding ? "Adding…" : "Add" }}
       </button>
     </div>

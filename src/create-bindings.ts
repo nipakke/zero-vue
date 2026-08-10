@@ -5,11 +5,7 @@ import {
   type MaybeQueryResult,
   type UseQueryOptions,
 } from "./query.ts";
-import {
-  useMutation,
-  type MutationResult,
-  type UseMutationOptions,
-} from "./mutation.ts";
+import { useMutation, type MutationResult, type UseMutationOptions } from "./mutation.ts";
 import type {
   BaseDefaultContext,
   BaseDefaultSchema,
@@ -38,16 +34,20 @@ import type {
  * own schema is a phantom: `defineQuery` widens it to `Schema`, but it has no
  * runtime effect — the query runs against the bound zero.)
  */
-type BoundQueries<QD extends QueryDefinitions, S extends BaseDefaultSchema> =
-  [QD] extends [never] ? never : QueryRegistry<QD, S>;
+type BoundQueries<QD extends QueryDefinitions, S extends BaseDefaultSchema> = [QD] extends [never]
+  ? never
+  : QueryRegistry<QD, S>;
 
 /**
  * The mutators argument to the returned `useMutation` callback. Resolves to
  * `never` when `createBindings` was called without a mutator registry, so the
  * mutators-taking form is only available when one was provided.
  */
-type BoundMutators<MRD extends MutatorDefinitions, S extends BaseDefaultSchema> =
-  [MRD] extends [never] ? never : MutatorRegistry<MRD, S>;
+type BoundMutators<MRD extends MutatorDefinitions, S extends BaseDefaultSchema> = [MRD] extends [
+  never,
+]
+  ? never
+  : MutatorRegistry<MRD, S>;
 
 /** Context injected into a bound `useMutation` callback — the bound mutator
  * registry. The callback returns a `MutateRequest` from this registry, which
@@ -161,9 +161,7 @@ export function createBindings<
     TOutput extends ReadonlyJSONValue | undefined,
     TReturn = PullRow<TTable, S>,
   >(
-    querySignal: () =>
-      | QueryOrQueryRequest<TTable, TInput, TOutput, S, TReturn, Context>
-      | Falsy,
+    querySignal: () => QueryOrQueryRequest<TTable, TInput, TOutput, S, TReturn, Context> | Falsy,
     options?: UseQueryOptions | (() => UseQueryOptions | undefined),
   ): MaybeQueryResult<TReturn>;
 
@@ -175,9 +173,7 @@ export function createBindings<
   >(
     querySignal: (
       queries: BoundQueries<QD, S>,
-    ) =>
-      | QueryOrQueryRequest<TTable, TInput, TOutput, S, TReturn, Context>
-      | Falsy,
+    ) => QueryOrQueryRequest<TTable, TInput, TOutput, S, TReturn, Context> | Falsy,
     options?: UseQueryOptions | (() => UseQueryOptions | undefined),
   ): QueryResult<TReturn> | MaybeQueryResult<TReturn> {
     // A zero-argument signal ignores the passed registry, so one call serves

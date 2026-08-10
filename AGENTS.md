@@ -68,17 +68,17 @@ pnpm check:playground # typecheck the playground (vue-tsc)
 
 ## Important Files
 
-| File                      | Why it matters                                                                              |
-| ------------------------- | ------------------------------------------------------------------------------------------- |
-| `src/index.ts`            | Package entry (exports map `.` → `./src/index.ts`)                                          |
-| `src/query.ts`            | Core query composable; primary public read API                                              |
-| `src/mutation.ts`         | Core mutation composable (`useMutation`); timeout race + `isPending`/`error` tracking        |
-| `src/vue-view.ts`         | `VueView` factory view + `vueViewFactory`; IVM view lifecycle + reactivity          |
-| `package.json`            | Scripts, exports map, peer `vue ^3.5`, dep `@rocicorp/zero ^1.8.0`                          |
-| `pnpm-workspace.yaml`     | Workspace (`packages: [.playground]`), catalog + overrides for vite/vitest/vite-plus        |
-| `tsconfig.json`           | TS strictness, `allowImportingTsExtensions`, `types: ["vitest/globals"]`                    |
-| `vitest.config.ts`        | `environment: 'jsdom'`, `include: ['test/**/*.test.ts']`                                    |
-| `vite.config.ts`          | vite-plus config: `fmt`, `lint` (oxlint plugin, `vite-plus/prefer-vite-plus-imports` error) |
+| File                      | Why it matters                                                                                  |
+| ------------------------- | ----------------------------------------------------------------------------------------------- |
+| `src/index.ts`            | Package entry (exports map `.` → `./src/index.ts`)                                              |
+| `src/query.ts`            | Core query composable; primary public read API                                                  |
+| `src/mutation.ts`         | Core mutation composable (`useMutation`); timeout race + `isPending`/`error` tracking           |
+| `src/vue-view.ts`         | `VueView` factory view + `vueViewFactory`; IVM view lifecycle + reactivity                      |
+| `package.json`            | Scripts, exports map, peer `vue ^3.5`, dep `@rocicorp/zero ^1.8.0`                              |
+| `pnpm-workspace.yaml`     | Workspace (`packages: [.playground]`), catalog + overrides for vite/vitest/vite-plus            |
+| `tsconfig.json`           | TS strictness, `allowImportingTsExtensions`, `types: ["vitest/globals"]`                        |
+| `vitest.config.ts`        | `environment: 'jsdom'`, `include: ['test/**/*.test.ts']`                                        |
+| `vite.config.ts`          | vite-plus config: `fmt`, `lint` (oxlint plugin, `vite-plus/prefer-vite-plus-imports` error)     |
 | `.playground/bindings.ts` | Canonical usage: `new Zero({server: null, mutators, ...})` + `createBindings(zero, {mutators})` |
 
 ## Runtime/Tooling Preferences

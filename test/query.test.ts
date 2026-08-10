@@ -198,18 +198,14 @@ describe("useQuery — TTL and lifecycle", () => {
     };
 
     const { data: rows } = useQuery(z, querySignal, () => ({ ttl: ttlRef.value }));
-    expect(JSON.parse(JSON.stringify(rows.value))).toEqual([
-      { id: 1, name: "alpha" },
-    ]);
+    expect(JSON.parse(JSON.stringify(rows.value))).toEqual([{ id: 1, name: "alpha" }]);
 
     // Change the query signal — forces re-materialization.
     // The new view should be created with ttl='1h', not the default 5m.
     filter.value = "one";
     await nextTick();
 
-    expect(JSON.parse(JSON.stringify(rows.value))).toEqual([
-      { id: 1, name: "alpha" },
-    ]);
+    expect(JSON.parse(JSON.stringify(rows.value))).toEqual([{ id: 1, name: "alpha" }]);
   });
 
   test("works outside a component (no onUnmounted guard)", async () => {
@@ -221,8 +217,6 @@ describe("useQuery — TTL and lifecycle", () => {
     const query = createBuilder(schema).item;
     const { data: rows } = useQuery(z, () => query);
 
-    expect(JSON.parse(JSON.stringify(rows.value))).toEqual([
-      { id: 1, name: "alpha" },
-    ]);
+    expect(JSON.parse(JSON.stringify(rows.value))).toEqual([{ id: 1, name: "alpha" }]);
   });
 });

@@ -1,9 +1,5 @@
 import { describe, expect, test } from "vite-plus/test";
-import {
-  useMutation,
-  MutationTimeoutError,
-  DEFAULT_MUTATION_TIMEOUT_MS,
-} from "../src/mutation.ts";
+import { useMutation, MutationTimeoutError, DEFAULT_MUTATION_TIMEOUT_MS } from "../src/mutation.ts";
 import { createBindings } from "../src/create-bindings.ts";
 import {
   Zero,
@@ -26,11 +22,9 @@ const schema = createSchema({
 // composables bind.
 const defineMutatorsWithSchema = defineMutatorsWithType<typeof schema>();
 const mutators = defineMutatorsWithSchema({
-  addItem: defineMutator<{ id: number; name: string }, typeof schema>(
-    async ({ tx, args }) => {
-      await tx.mutate.item.insert(args);
-    },
-  ),
+  addItem: defineMutator<{ id: number; name: string }, typeof schema>(async ({ tx, args }) => {
+    await tx.mutate.item.insert(args);
+  }),
   fail: defineMutator<{ id: number; name: string }, typeof schema>(async () => {
     throw new Error("boom");
   }),
@@ -42,8 +36,7 @@ const mutators = defineMutatorsWithSchema({
 });
 
 // Strips the `Symbol(rc)` row-context symbols Zero attaches to rows.
-const rows = (d: unknown) =>
-  JSON.parse(JSON.stringify(d)) as { id: number; name: string }[];
+const rows = (d: unknown) => JSON.parse(JSON.stringify(d)) as { id: number; name: string }[];
 
 // Flushes the microtask queue (the tracking chain runs after the awaited
 // client promise's own handlers), so state assertions see the settled result.
@@ -56,12 +49,17 @@ const silentLogSink = { log: () => {} };
 
 describe("useMutation", () => {
   test("tracks isPending and delivers data via a registry mutator", async () => {
-    const z = new Zero({ server: null, userID: "test", schema, kvStore: "mem", logSink: silentLogSink, mutators });
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+      mutators,
+    });
 
-    const { mutate, isPending, error } = useMutation(
-      z,
-      (item: { id: number; name: string }) =>
-        mutators.addItem(item),
+    const { mutate, isPending, error } = useMutation(z, (item: { id: number; name: string }) =>
+      mutators.addItem(item),
     );
 
     const result = mutate({ id: 1, name: "alpha" });
@@ -74,13 +72,18 @@ describe("useMutation", () => {
 
     expect(isPending.value).toBe(false);
     expect(error.value).toBeNull();
-    expect(rows(await z.run(createBuilder(schema).item))).toEqual([
-      { id: 1, name: "alpha" },
-    ]);
+    expect(rows(await z.run(createBuilder(schema).item))).toEqual([{ id: 1, name: "alpha" }]);
   });
 
   test("surfaces a timed-out tracked promise in error", async () => {
-    const z = new Zero({ server: null, userID: "test", schema, kvStore: "mem", logSink: silentLogSink, mutators });
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+      mutators,
+    });
 
     // Zero normalizes mutation failures into resolved error-details (never
     // rejects), so the only genuine rejection the composable tracks is the
@@ -103,12 +106,17 @@ describe("useMutation", () => {
   });
 
   test("handles MutatorResultDetails error type (resolved but error)", async () => {
-    const z = new Zero({ server: null, userID: "test", schema, kvStore: "mem", logSink: silentLogSink, mutators });
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+      mutators,
+    });
 
-    const { mutate, isPending, error } = useMutation(
-      z,
-      (item: { id: number; name: string }) =>
-        mutators.fail(item),
+    const { mutate, isPending, error } = useMutation(z, (item: { id: number; name: string }) =>
+      mutators.fail(item),
     );
 
     // The client promise resolves with `{type: 'error', error: {message}}`
@@ -121,7 +129,14 @@ describe("useMutation", () => {
   });
 
   test("times out when the tracked promise never settles", async () => {
-    const z = new Zero({ server: null, userID: "test", schema, kvStore: "mem", logSink: silentLogSink, mutators });
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+      mutators,
+    });
 
     const { mutate, isPending, error } = useMutation(
       z,
@@ -143,7 +158,14 @@ describe("useMutation", () => {
   });
 
   test("per-call timeout overrides the composable timeout", async () => {
-    const z = new Zero({ server: null, userID: "test", schema, kvStore: "mem", logSink: silentLogSink, mutators });
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+      mutators,
+    });
 
     const { mutate, isPending, error } = useMutation(
       z,
@@ -162,7 +184,14 @@ describe("useMutation", () => {
   });
 
   test("throwOnTimeout rejects the call's tracked promise", async () => {
-    const z = new Zero({ server: null, userID: "test", schema, kvStore: "mem", logSink: silentLogSink, mutators });
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+      mutators,
+    });
 
     const { mutate, error } = useMutation(
       z,
@@ -177,12 +206,18 @@ describe("useMutation", () => {
   });
 
   test("throwOnError rejects the call on error details", async () => {
-    const z = new Zero({ server: null, userID: "test", schema, kvStore: "mem", logSink: silentLogSink, mutators });
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+      mutators,
+    });
 
     const { mutate, error } = useMutation(
       z,
-      (item: { id: number; name: string }) =>
-        mutators.fail(item),
+      (item: { id: number; name: string }) => mutators.fail(item),
       { throwOnError: true },
     );
 
@@ -193,13 +228,18 @@ describe("useMutation", () => {
   });
 
   test("per-call throwOnTimeout wins over the global default", async () => {
-    const z = new Zero({ server: null, userID: "test", schema, kvStore: "mem", logSink: silentLogSink, mutators });
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+      mutators,
+    });
 
-    const { mutate } = useMutation(
-      z,
-      (item: { id: number; name: string }) => mutators.hang(item),
-      { timeout: 50 },
-    );
+    const { mutate } = useMutation(z, (item: { id: number; name: string }) => mutators.hang(item), {
+      timeout: 50,
+    });
 
     // Global throwOnTimeout defaults to false; the per-call flag opts in.
     const result = mutate({ id: 1, name: "x" }, { throwOnTimeout: true });
@@ -207,7 +247,14 @@ describe("useMutation", () => {
   });
 
   test("per-call throwOnTimeout: false suppresses the call rejection", async () => {
-    const z = new Zero({ server: null, userID: "test", schema, kvStore: "mem", logSink: silentLogSink, mutators });
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+      mutators,
+    });
 
     const { mutate, error } = useMutation(
       z,
@@ -233,14 +280,19 @@ describe("useMutation", () => {
   });
 
   test("works outside a component (no onUnmounted guard)", async () => {
-    const z = new Zero({ server: null, userID: "test", schema, kvStore: "mem", logSink: silentLogSink, mutators });
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+      mutators,
+    });
 
     // getCurrentInstance() returns null outside setup(); useMutation must not
     // register onUnmounted and must still track mutations.
-    const { mutate, isPending } = useMutation(
-      z,
-      (item: { id: number; name: string }) =>
-        mutators.addItem(item),
+    const { mutate, isPending } = useMutation(z, (item: { id: number; name: string }) =>
+      mutators.addItem(item),
     );
 
     const result = mutate({ id: 9, name: "outside" });
@@ -248,20 +300,24 @@ describe("useMutation", () => {
     await flush();
 
     expect(isPending.value).toBe(false);
-    expect(rows(await z.run(createBuilder(schema).item))).toEqual([
-      { id: 9, name: "outside" },
-    ]);
+    expect(rows(await z.run(createBuilder(schema).item))).toEqual([{ id: 9, name: "outside" }]);
   });
 
   test("awaitMode: 'server' races the server promise", async () => {
-    const z = new Zero({ server: null, userID: "test", schema, kvStore: "mem", logSink: silentLogSink, mutators });
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+      mutators,
+    });
 
     // With `server: null` the server promise never settles, so the timeout
     // race is the observable behavior: `awaitMode: 'server'` must not hang.
     const { mutate, isPending, error } = useMutation(
       z,
-      (item: { id: number; name: string }) =>
-        mutators.addItem(item),
+      (item: { id: number; name: string }) => mutators.addItem(item),
       { awaitMode: "server", timeout: 50 },
     );
 
@@ -277,12 +333,18 @@ describe("useMutation", () => {
 
 describe("createBindings", () => {
   test("bound useMutation uses the shared zero", async () => {
-    const z = new Zero({ server: null, userID: "test", schema, kvStore: "mem", logSink: silentLogSink, mutators });
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+      mutators,
+    });
 
     const { useMutation } = createBindings(z);
-    const { mutate, isPending } = useMutation(
-      (_, item: { id: number; name: string }) =>
-        mutators.addItem(item),
+    const { mutate, isPending } = useMutation((_, item: { id: number; name: string }) =>
+      mutators.addItem(item),
     );
 
     const result = mutate({ id: 6, name: "bound" });
@@ -290,18 +352,22 @@ describe("createBindings", () => {
     await flush();
 
     expect(isPending.value).toBe(false);
-    expect(rows(await z.run(createBuilder(schema).item))).toEqual([
-      { id: 6, name: "bound" },
-    ]);
+    expect(rows(await z.run(createBuilder(schema).item))).toEqual([{ id: 6, name: "bound" }]);
   });
 
   test("bound useMutation with a mutator registry", async () => {
-    const z = new Zero({ server: null, userID: "test", schema, kvStore: "mem", logSink: silentLogSink, mutators });
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+      mutators,
+    });
 
     const { useMutation } = createBindings(z, { mutators });
-    const { mutate, isPending } = useMutation(
-      ({ mutators }, item: { id: number; name: string }) =>
-        mutators.addItem(item),
+    const { mutate, isPending } = useMutation(({ mutators }, item: { id: number; name: string }) =>
+      mutators.addItem(item),
     );
 
     const result = mutate({ id: 1, name: "from-registry" });
@@ -315,12 +381,18 @@ describe("createBindings", () => {
   });
 
   test("bound useMutation accepts per-call options", async () => {
-    const z = new Zero({ server: null, userID: "test", schema, kvStore: "mem", logSink: silentLogSink, mutators });
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+      mutators,
+    });
 
     const { useMutation } = createBindings(z, { mutators });
-    const { mutate } = useMutation(
-      ({ mutators }, item: { id: number; name: string }) =>
-        mutators.fail(item),
+    const { mutate } = useMutation(({ mutators }, item: { id: number; name: string }) =>
+      mutators.fail(item),
     );
 
     const result = mutate({ id: 1, name: "x" }, { throwOnError: true });
@@ -329,31 +401,42 @@ describe("createBindings", () => {
   });
 
   test("mutators callback is rejected when no registry is bound", () => {
-    const z = new Zero({ server: null, userID: "test", schema, kvStore: "mem", logSink: silentLogSink });
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+    });
     const { useMutation } = createBindings(z);
 
     // Without a registry the callback's context has `mutators: never`, so a
     // mutators-taking callback must not be assignable. Checked at the type
     // level via `@ts-expect-error` — the callback is never invoked.
     // @ts-expect-error - no mutator registry bound, so accessing ctx.mutators is rejected.
-    const _rejected: Parameters<typeof useMutation>[0] = (ctx) => ctx.mutators.addItem({ id: 1, name: "x" });
+    const _rejected: Parameters<typeof useMutation>[0] = (ctx) =>
+      ctx.mutators.addItem({ id: 1, name: "x" });
     expect(_rejected).toBeTypeOf("function");
 
     // The mutate-only form still works.
-    useMutation((_, item: { id: number; name: string }) =>
-      mutators.addItem(item),
-    );
+    useMutation((_, item: { id: number; name: string }) => mutators.addItem(item));
   });
 });
 
 describe("useMutation — reset", () => {
   test("reset clears error and isPending", async () => {
-    const z = new Zero({ server: null, userID: "test", schema, kvStore: "mem", logSink: silentLogSink, mutators });
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+      mutators,
+    });
 
     const { mutate, isPending, error, reset } = useMutation(
       z,
-      (item: { id: number; name: string }) =>
-        mutators.fail(item),
+      (item: { id: number; name: string }) => mutators.fail(item),
     );
 
     await mutate({ id: 1, name: "x" }).client;
