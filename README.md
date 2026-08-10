@@ -1,31 +1,18 @@
 # @nipakke/zero-vue
 
-Thin Vue 3 reactivity adapter over the [Zero](https://zero.rocicorp.dev/) sync engine. Wraps Zero's materialized views and connection state as Vue reactive state, so a Vue app can query local, offline-first data declaratively.
+A Vue 3 wrapper around [Zero](https://zero.rocicorp.dev/) — query local, offline-first data reactively.
 
-- `useQuery` — turn a query signal into reactive `data` / `error` / `status`
-- `createBindings` — bind a Zero instance once, share it across every query
-- `useConnectionState` — reactive connection status
-- `VueView` — the materialized-view wrapper underneath
+`useQuery` turns a query signal into reactive `data` / `error` / `status`. `createBindings` binds a Zero instance once and shares it across every query. `useConnectionState` exposes connection status.
 
-## Requirements
-
-`vue` and `@rocicorp/zero` are **peer dependencies** — you install them yourself:
-
-| Package | Version |
-|---|---|
-| `vue` | `^3.3.0` |
-| `@rocicorp/zero` | `>=1.7.0 <1.9.0` |
-
-The published package ships ESM with type declarations (`dist/`), and is `sideEffects: false` for tree-shaking.
-
-## Installation
+## Install
 
 ```bash
 pnpm add @nipakke/zero-vue @rocicorp/zero vue
-# npm i @nipakke/zero-vue @rocicorp/zero vue
 ```
 
-## Quick start
+`vue` (`^3.3.0`) and `@rocicorp/zero` (`>=1.7.0 <1.9.0`) are peer dependencies.
+
+## Example
 
 ```ts
 // zero.ts
@@ -35,12 +22,7 @@ import { createBindings } from "@nipakke/zero-vue";
 const schema = createSchema({
   tables: [
     table("item")
-      .columns({
-        id: number(),
-        title: string(),
-        done: boolean(),
-        createdAt: number(),
-      })
+      .columns({ id: number(), title: string(), done: boolean(), createdAt: number() })
       .primaryKey("id"),
   ],
   enableLegacyMutators: true,
@@ -54,6 +36,7 @@ export const zero = new Zero({
 });
 
 // Bind the zero once; every query shares it.
+// createBindings also accepts a getter: createBindings(() => zero)
 export const { query } = createBindings(zero);
 ```
 
@@ -64,18 +47,15 @@ import { createBuilder } from "@rocicorp/zero";
 import { query, zero, schema } from "./zero.ts";
 
 const doneOnly = ref(false);
-const ttl = ref<number | undefined>(undefined);
 
-// Every ref read inside the signal re-evaluates and re-materializes the view.
+// Build the base query once; chaining returns a new builder each time.
+const base = createBuilder(schema).item;
+
 const { data: items, status, error } = query(() => {
-  let q = createBuilder(schema).item;
+  let q = base;
   if (doneOnly.value) q = q.where("done", true);
   return q.orderBy("createdAt", "desc");
-}, () => ({ ttl: ttl.value }));
-
-const addItem = async () => {
-  await zero.mutate.item.insert({ id: Date.now(), title: "todo", done: false, createdAt: Date.now() });
-};
+});
 </script>
 
 <template>
@@ -88,71 +68,9 @@ const addItem = async () => {
 
 ## API
 
-### `useQuery(zero, querySignal, options?)`
-
-```ts
-const { data, error, status } = useQuery(zero, () => createBuilder(schema).item);
-```
-
-- `zero` — a `Zero` instance, `ref`, or getter (`MaybeRefOrGetter`). Reactive zeros are watched: swapping the instance tears down every view and re-materializes against the new one.
-- `querySignal` — a getter returning a Zero `Query` (or query request). Return a falsy value to disable the query: `data` becomes `undefined` and `status` becomes `"disabled"`.
-- `options` — `{ ttl?: TTL }` or a getter for it. Default TTL is 5 minutes (`DEFAULT_TTL_MS`).
-- Returns `{ data, error, status }` where:
-  - `data` — `ComputedRef` of the query rows (or `undefined` on the falsy/disabled path)
-  - `status` — `"complete" | "unknown" | "error" | "disabled"`
-  - `error` — `undefined`, or `{ error, retry, refetch }` with a re-materializing callback
-
-Views are created on mount and torn down on unmount (or when the query hash / zero / TTL changes).
-
-### `createBindings(zero)`
-
-```ts
-const { query } = createBindings(zero);
-// query(querySignal, options?) === useQuery(zero, querySignal, options?)
-```
-
-Call once per app. All returned `query` calls share one reactive zero, so the zero is passed once instead of on every call.
-
-### `useConnectionState(zero)`
-
-```ts
-import { useConnectionState } from "@nipakke/zero-vue";
-
-const state = useConnectionState(zero); // Ref<ConnectionState>
-```
-
-Reactive `ConnectionState` from `zero.connection.state`, subscribing on mount and unsubscribing on unmount. The zero is resolved reactively — swapping it re-subscribes to the new instance.
-
-### `VueView`
-
-The materialized-view wrapper used internally by the composables. Useful if you need the view lifecycle directly:
-
-```ts
-import { VueView } from "@nipakke/zero-vue";
-```
-
-## Development
-
-```bash
-pnpm install
-pnpm test          # unit tests
-pnpm check-types   # library typecheck
-pnpm build         # dist/ (ESM + CJS + d.ts), with publint + attw gates
-pnpm playground    # run the demo app
-```
-
-## Releasing
-
-Versioning is managed by pnpm's built-in release tooling ([docs](https://pnpm.io/versioning)):
-
-```bash
-pnpm change                 # record a change intent (.changeset/*.md)
-pnpm change status          # preview pending intents
-pnpm version -r             # consume intents: bump versions, write changelogs
-pnpm publish -r             # publish the bumped workspace
-```
-
-The playground (`@zero-vue/playground`) is ignored via `versioning.ignore` in `pnpm-workspace.yaml` — it is private and never versioned or published. First releases publish the manifest version verbatim; recorded intents apply from the next release.
+- `useQuery(zero, querySignal, options?)` → `{ data, error, status }`. `zero` may be a `Zero`, `ref`, or getter; `querySignal` is a getter returning a `Query` (a falsy value disables the query → `data: undefined`, `status: "disabled"`); `options` is `{ ttl?: TTL }` or a getter (default 5 min). `status` is `"complete" | "unknown" | "error" | "disabled"`.
+- `createBindings(zero)` → `{ query }` where `query(querySignal, options?) === useQuery(zero, querySignal, options?)`. Call once per app.
+- `useConnectionState(zero)` → `Ref<ConnectionState>` from `zero.connection.state`, subscribed on mount and unsubscribed on unmount.
 
 ## License
 
