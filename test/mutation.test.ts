@@ -413,8 +413,8 @@ describe("createBindings", () => {
     // Without a registry the callback's context has `mutators: never`, so a
     // mutators-taking callback must not be assignable. Checked at the type
     // level via `@ts-expect-error` — the callback is never invoked.
-    // @ts-expect-error - no mutator registry bound, so accessing ctx.mutators is rejected.
     const _rejected: Parameters<typeof useMutation>[0] = (ctx) =>
+      // @ts-expect-error - no mutator registry bound, so accessing ctx.mutators is rejected.
       ctx.mutators.addItem({ id: 1, name: "x" });
     expect(_rejected).toBeTypeOf("function");
 

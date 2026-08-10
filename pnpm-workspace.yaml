@@ -15,6 +15,10 @@ versioning:
   # The playground is private — never versioned or published.
   ignore:
     - "@zero-vue/playground"
+  changelog:
+    # Keep committed CHANGELOG.md files per package instead of packing
+    # changelogs only into published tarballs.
+    storage: repository
 peerDependencyRules:
   allowAny:
     - vite

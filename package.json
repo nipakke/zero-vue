@@ -42,6 +42,7 @@
     "prepublishOnly": "pnpm build",
     "test": "vp test run",
     "test:watch": "vp test",
+    "ci:publish": "pnpm publish -r --provenance",
     "check-types": "vue-tsc --noEmit",
     "check:playground": "pnpm build && pnpm --filter @zero-vue/playground typecheck",
     "playground": "pnpm --filter @zero-vue/playground dev",
