@@ -11,6 +11,7 @@ import type {
   BaseDefaultContext,
   BaseDefaultSchema,
   ConnectionState,
+  CustomMutatorDefs,
   DefaultContext,
   DefaultSchema,
   Zero,
@@ -30,13 +31,14 @@ import type {
 export function useConnectionState<
   S extends BaseDefaultSchema = DefaultSchema,
   Context extends BaseDefaultContext = DefaultContext,
->(zero: MaybeRefOrGetter<Zero<S, undefined, Context>>): Ref<ConnectionState> {
+  MD extends CustomMutatorDefs | undefined = undefined,
+>(zero: MaybeRefOrGetter<Zero<S, MD, Context>>): Ref<ConnectionState> {
   const zeroRef = computed(() => toValue(zero));
   const connectionState = ref<ConnectionState>(zeroRef.value.connection.state.current);
 
   let unsubscribe: (() => void) | undefined;
 
-  const subscribe = (z: Zero<S, undefined, Context>) => {
+  const subscribe = (z: Zero<S, MD, Context>) => {
     connectionState.value = z.connection.state.current;
     unsubscribe = z.connection.state.subscribe((state: ConnectionState) => {
       connectionState.value = state;

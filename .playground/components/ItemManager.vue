@@ -3,7 +3,7 @@ import { computed, ref } from "vue";
 import { type UseQueryOptions } from "@nipakke/zero-vue";
 import { createBuilder } from "@rocicorp/zero";
 import { schema, type ItemRow } from "../schema.ts";
-import { zero, useQuery } from "../bindings.ts";
+import { useQuery, useMutation } from "../bindings.ts";
 import QueryInspector from "./QueryInspector.vue";
 
 // --- Interactive inputs that drive the query signal ------------------------
@@ -46,32 +46,47 @@ const total = computed(() => allRows.value?.length ?? 0);
 const active = computed(() => activeRows.value?.length ?? 0);
 const done = computed(() => doneRows.value?.length ?? 0);
 
-// --- Mutations via zero --------------------------------------------------------
-const addItem = async () => {
+// --- Mutations via useMutation -------------------------------------------------
+const { mutate: insertItem, isPending: isAdding } = useMutation(
+  ({ mutators }, title: string) => {
+    const id = Date.now();
+    return mutators.addItem({ id, title, done: false, createdAt: id });
+  },
+);
+
+const { mutate: toggleMutate } = useMutation(
+  ({ mutators }, args: { id: number; done: boolean }) =>
+    mutators.toggleItem(args),
+);
+
+const { mutate: deleteMutate } = useMutation(
+  ({ mutators }, id: number) => mutators.deleteItem({ id }),
+);
+
+const addItem = () => {
   const title = newTitle.value.trim();
   if (!title) return;
-  const id = Date.now();
-  await zero.mutate.item.insert({ id, title, done: false, createdAt: id });
+  insertItem(title);
   newTitle.value = "";
 };
 
 const toggleItem = (row: ItemRow) => {
-  void zero.mutate.item.update({ id: row.id, done: !row.done });
+  void toggleMutate({ id: row.id, done: !row.done });
 };
 
 const removeItem = (row: ItemRow) => {
-  void zero.mutate.item.delete({ id: row.id });
+  void deleteMutate(row.id);
 };
 
 const clearDone = () => {
   for (const row of doneRows.value ?? []) {
-    void zero.mutate.item.delete({ id: row.id });
+    void deleteMutate(row.id);
   }
 };
 
 const markAllDone = () => {
   for (const row of activeRows.value ?? []) {
-    void zero.mutate.item.update({ id: row.id, done: true });
+    void toggleMutate({ id: row.id, done: true });
   }
 };
 </script>
@@ -88,7 +103,13 @@ const markAllDone = () => {
         placeholder="What needs doing?"
         @keyup.enter="addItem"
       />
-      <button class="btn btn-primary" :disabled="!newTitle.trim()" @click="addItem">Add</button>
+      <button
+        class="btn btn-primary"
+        :disabled="!newTitle.trim() || isAdding"
+        @click="addItem"
+      >
+        {{ isAdding ? "Adding…" : "Add" }}
+      </button>
     </div>
 
     <div class="stats">

@@ -8,4 +8,12 @@ export {
   type QueryStatus,
   type UseQueryOptions,
 } from "./query.ts";
+export {
+  useMutation,
+  MutationTimeoutError,
+  DEFAULT_MUTATION_TIMEOUT_MS,
+  type UseMutationOptions,
+  type MutationCallOptions,
+  type MutationResult,
+} from "./mutation.ts";
 export { VueView } from "./vue-view.ts";

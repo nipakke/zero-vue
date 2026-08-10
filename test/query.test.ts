@@ -106,6 +106,34 @@ describe("createBindings", () => {
     expect(JSON.parse(JSON.stringify(rows.value))).toEqual([{ id: 99, name: "from-b" }]);
   });
 
+  test("re-materializes the registry-getter form against a swapped reactive zero", async () => {
+    const zeroA = new Zero({ server: null, userID: "test", schema, kvStore: "mem" });
+    await zeroA.mutate.item.insert({ id: 1, name: "from-a" });
+
+    // Same registry path as the registry-getter test, but with a reactive
+    // zero so the swap path re-resolves the query through the bound registry
+    // against the new instance.
+    const queries = defineQueries({
+      all: defineQuery(() => createBuilder(schema).item),
+    });
+
+    const zeroRef = shallowRef<typeof zeroA>(zeroA);
+    const { useQuery } = createBindings(zeroRef, { queries });
+    const { data: rows } = useQuery((q) => q.all());
+
+    // Initially reflects zeroA.
+    expect(JSON.parse(JSON.stringify(rows.value))).toEqual([{ id: 1, name: "from-a" }]);
+
+    // Swap to a fresh zero holding a different row.
+    const zeroB = new Zero({ server: null, userID: "test", schema, kvStore: "mem" });
+    await zeroB.mutate.item.insert({ id: 99, name: "from-b" });
+
+    zeroRef.value = zeroB;
+    await nextTick();
+
+    expect(JSON.parse(JSON.stringify(rows.value))).toEqual([{ id: 99, name: "from-b" }]);
+  });
+
   test("returns undefined data and disabled status for falsy/disabled query", async () => {
     const z = new Zero({ server: null, userID: "test", schema, kvStore: "mem" });
 

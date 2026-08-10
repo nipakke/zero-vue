@@ -12,6 +12,7 @@ import {
 import {
   type BaseDefaultContext,
   type BaseDefaultSchema,
+  type CustomMutatorDefs,
   type DefaultContext,
   type DefaultSchema,
   type Falsy,
@@ -53,8 +54,9 @@ export function useQuery<
   TSchema extends BaseDefaultSchema = DefaultSchema,
   TReturn = PullRow<TTable, TSchema>,
   TContext extends BaseDefaultContext = DefaultContext,
+  MD extends CustomMutatorDefs | undefined = undefined,
 >(
-  zeroInput: MaybeRefOrGetter<Zero<TSchema, undefined, TContext>>,
+  zeroInput: MaybeRefOrGetter<Zero<TSchema, MD, TContext>>,
   querySignal: () => QueryOrQueryRequest<TTable, TInput, TOutput, TSchema, TReturn, TContext>,
   options?: UseQueryOptions | (() => UseQueryOptions | undefined),
 ): QueryResult<TReturn>;
@@ -69,8 +71,9 @@ export function useQuery<
   TSchema extends BaseDefaultSchema = DefaultSchema,
   TReturn = PullRow<TTable, TSchema>,
   TContext extends BaseDefaultContext = DefaultContext,
+  MD extends CustomMutatorDefs | undefined = undefined,
 >(
-  zeroInput: MaybeRefOrGetter<Zero<TSchema, undefined, TContext>>,
+  zeroInput: MaybeRefOrGetter<Zero<TSchema, MD, TContext>>,
   querySignal: () =>
     | QueryOrQueryRequest<TTable, TInput, TOutput, TSchema, TReturn, TContext>
     | Falsy,
@@ -87,8 +90,9 @@ export function useQuery<
   TSchema extends BaseDefaultSchema = DefaultSchema,
   TReturn = PullRow<TTable, TSchema>,
   TContext extends BaseDefaultContext = DefaultContext,
+  MD extends CustomMutatorDefs | undefined = undefined,
 >(
-  z: MaybeRefOrGetter<Zero<TSchema, undefined, TContext>>,
+  z: MaybeRefOrGetter<Zero<TSchema, MD, TContext>>,
   querySignal: () =>
     | QueryOrQueryRequest<TTable, TInput, TOutput, TSchema, TReturn, TContext>
     | Falsy,
