@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vite-plus/test";
-import { nextTick, ref, shallowRef } from "vue";
+import { effectScope, nextTick, ref, shallowRef } from "vue";
 import { useQuery, type UseQueryOptions } from "../src/query.ts";
 import { createBindings } from "../src/create-bindings.ts";
 import {
@@ -66,6 +66,21 @@ describe("useQuery", () => {
     expect(rows.value).toBeUndefined();
     expect(status.value).toBe("disabled");
     expect(error.value).toBeUndefined();
+  });
+
+  test("surfaces an unhashable query as error status, not disabled", async () => {
+    const z = new Zero({ server: null, userID: "test", schema, kvStore: "mem" });
+
+    // A query object that does not carry Zero's queryInternals tag (e.g. one
+    // built against a different copy of Zero) cannot be hashed. Regression:
+    // this used to fall into the "no hash → no view" path and silently
+    // surface as 'disabled', indistinguishable from an off query.
+    const { data, status, error } = useQuery(z, () => ({}) as never);
+
+    expect(status.value).toBe("error");
+    expect(error.value?.type).toBe("InvalidQuery");
+    expect(error.value?.message).toContain("QueryInternals");
+    expect(data.value).toBeUndefined();
   });
 });
 
@@ -208,9 +223,33 @@ describe("useQuery — TTL and lifecycle", () => {
     expect(JSON.parse(JSON.stringify(rows.value))).toEqual([{ id: 1, name: "alpha" }]);
   });
 
+  test("tears the view down when the enclosing effectScope is disposed", async () => {
+    // Regression: cleanup used to be registered only when inside a component
+    // (getCurrentInstance), so a query in an effectScope (e.g. a store) never
+    // destroyed its view after the scope stopped.
+    const z = new Zero({ server: null, userID: "test", schema, kvStore: "mem" });
+    await z.mutate.item.insert({ id: 1, name: "alpha" });
+
+    const query = createBuilder(schema).item;
+    let rows: { value: unknown } | undefined;
+
+    const scope = effectScope();
+    scope.run(() => {
+      rows = useQuery(z, () => query).data;
+    });
+    expect(JSON.parse(JSON.stringify(rows!.value))).toEqual([{ id: 1, name: "alpha" }]);
+
+    scope.stop();
+
+    // After disposal the destroyed view must not receive updates.
+    await z.mutate.item.insert({ id: 2, name: "beta" });
+    await nextTick();
+    expect(JSON.parse(JSON.stringify(rows!.value))).toEqual([{ id: 1, name: "alpha" }]);
+  });
+
   test("works outside a component (no onUnmounted guard)", async () => {
-    // getCurrentInstance() returns null outside setup(); useQuery must not
-    // register onUnmounted and must still deliver data.
+    // getCurrentScope() returns null outside setup()/effectScope(); useQuery
+    // must not register onScopeDispose and must still deliver data.
     const z = new Zero({ server: null, userID: "test", schema, kvStore: "mem" });
     await z.mutate.item.insert({ id: 1, name: "alpha" });
 

@@ -1,4 +1,13 @@
-import { computed, onUnmounted, ref, watch, type MaybeRefOrGetter, type Ref, toValue } from "vue";
+import {
+  computed,
+  getCurrentScope,
+  onScopeDispose,
+  ref,
+  watch,
+  type MaybeRefOrGetter,
+  type Ref,
+  toValue,
+} from "vue";
 import type {
   BaseDefaultContext,
   BaseDefaultSchema,
@@ -52,7 +61,10 @@ export function useConnectionState<
     { immediate: true },
   );
 
-  onUnmounted(cleanup);
+  // Unsubscribe when the enclosing scope (component or effectScope) is disposed
+  if (getCurrentScope()) {
+    onScopeDispose(cleanup);
+  }
 
   return connectionState;
 }

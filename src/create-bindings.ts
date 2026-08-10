@@ -126,6 +126,16 @@ export function createBindings<
   bindings?: {
     queries?: QueryRegistry<QD, BaseDefaultSchema>;
     mutators?: MutatorRegistry<MRD, S>;
+    /**
+     * App-level mutation error observer, fired for every bound mutation's
+     * failure — good for analytics, logging, and telemetry. Receives the same
+     * branded `Error` as `UseMutationOptions.onMutationError` and the
+     * composable's `error` ref: `instanceof MutationTimeoutError` for
+     * timeouts, `instanceof MutationError` for mutation failures. Fires after
+     * the per-composable callback, if any; like the local one it is a pure
+     * observer and never changes what `mutate` returns or what `error` holds.
+     */
+    onMutationError?: (error: Error) => void;
   },
 ) {
   const sharedZero = computed(() => toValue(zero));
@@ -199,7 +209,9 @@ export function createBindings<
   }
 
   // The bound useMutation: wraps the core composable with the shared zero and
-  // injects the optional mutator registry into the callback context.
+  // injects the optional mutator registry into the callback context. The
+  // bindings-level `onMutationError` (if any) is composed into the options so
+  // both observers fire per failure — the local one first, then the global.
   function mutation<const TArgs extends unknown[] = []>(
     mutationFn: (
       ctx: BoundMutationContext<MRD, S>,
@@ -207,6 +219,21 @@ export function createBindings<
     ) => MutateRequest<any, S, Context, any>,
     options?: UseMutationOptions | (() => UseMutationOptions | undefined),
   ): MutationResult<TArgs> {
+    // Compose the bindings-level observer with any per-composable one: the
+    // composed `onMutationError` is always present in the bound options and
+    // just optionally invokes the local and/or global callbacks.
+    const mergedOptions = (): UseMutationOptions | undefined => {
+      const local = toValue(options);
+      const localOnError = local?.onMutationError;
+      const globalOnError = bindings?.onMutationError;
+      return {
+        ...local,
+        onMutationError: (error) => {
+          localOnError?.(error);
+          globalOnError?.(error);
+        },
+      };
+    };
     return useMutation(
       sharedZero,
       (...args) =>
@@ -216,7 +243,7 @@ export function createBindings<
           },
           ...args,
         ),
-      options,
+      mergedOptions,
     );
   }
 

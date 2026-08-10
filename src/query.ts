@@ -2,12 +2,12 @@ import {
   ref,
   shallowRef,
   computed,
-  onUnmounted,
+  getCurrentScope,
+  onScopeDispose,
   watch,
   type ComputedRef,
   type MaybeRefOrGetter,
   toValue,
-  getCurrentInstance,
 } from "vue";
 import {
   type BaseDefaultContext,
@@ -43,6 +43,14 @@ export type MaybeQueryResult<TReturn> = {
 export type UseQueryOptions = {
   ttl?: TTL | undefined;
 };
+
+/**
+ * Outcome of hashing the resolved query. `undefined` when the query is
+ * disabled (falsy signal); `{ok: false}` when the query exists but cannot be
+ * hashed (e.g. built against a different copy of Zero) — surfaced as
+ * `status: 'error'` rather than a silent `'disabled'`.
+ */
+type QueryHash = { ok: true; value: string } | { ok: false; error: Error };
 
 /**
  * Overload 1: Query — returns QueryResult<TReturn>
@@ -115,14 +123,17 @@ export function useQuery<
     return addContextToQuery(raw, zero.value.context);
   });
 
-  const hash = computed(() => {
+  const hash = computed<QueryHash | undefined>(() => {
     const q = resolvedQuery.value;
     if (!q) return undefined;
     try {
       const qi = asQueryInternals(q);
-      return qi.hash() + JSON.stringify(qi.format ?? null) + zero.value.clientID;
-    } catch {
-      return undefined;
+      return {
+        ok: true,
+        value: qi.hash() + JSON.stringify(qi.format ?? null) + zero.value.clientID,
+      };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e : new Error(String(e)) };
     }
   });
 
@@ -138,7 +149,7 @@ export function useQuery<
       view.value = null;
 
       const q = resolvedQuery.value;
-      if (!q || hash.value === undefined) {
+      if (!q || hash.value === undefined || !hash.value.ok) {
         return;
       }
 
@@ -152,17 +163,24 @@ export function useQuery<
     view.value?.updateTTL(newTTL);
   });
 
-  // Cleanup on unmount
-  if (getCurrentInstance()) {
-    onUnmounted(() => {
+  // Cleanup when the enclosing scope (component or effectScope) is disposed
+  if (getCurrentScope()) {
+    onScopeDispose(() => {
       view.value?.destroy();
     });
   }
 
   return {
     data: computed(() => view.value?.data.value as HumanReadable<TReturn>),
-    status: computed(() => view.value?.status.value ?? "disabled"),
+    status: computed(() => {
+      if (hash.value?.ok === false) return "error";
+      return view.value?.status.value ?? "disabled";
+    }),
     error: computed(() => {
+      const hashFailure = hash.value;
+      if (hashFailure?.ok === false) {
+        return { type: "InvalidQuery", message: hashFailure.error.message, retry };
+      }
       const err = view.value?.error.value;
       return err ? { retry, ...err } : undefined;
     }),
