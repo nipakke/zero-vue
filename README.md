@@ -150,9 +150,11 @@ The mutators registry passed to `createBindings` must be the **same** one given 
 
 - `useQuery(zero, querySignal, options?)` → `{ data, error, status }`. `zero` may be a `Zero`, `ref`, or getter; `querySignal` is a getter returning a `Query` (a falsy value disables the query → `data: undefined`, `status: "disabled"`); `options` is `{ ttl?: TTL }` or a getter (default 5 min). `status` is `"complete" | "unknown" | "error" | "disabled"`.
 - `useMutation(zero, mutationFn, options?)` → `{ mutate, isPending, error, reset }`. `mutationFn(...args)` returns a `MutateRequest` from a registered custom mutator; `mutate(...args, options?)` executes it against the current zero and returns the `MutatorResult`. `options` is `{ awaitMode?: "client" | "server", timeout?: number, throwOnTimeout?: boolean, throwOnError?: boolean }` (timeout defaults to 5s; `Infinity` disables it). Each `mutate` call may override options by passing a trailing `MutationCallOptions` object.
-- `createBindings(zero)` → `{ useQuery, useMutation }`, both pre-bound to the shared reactive zero. Call once per app.
+- `createBindings(zero)` → `{ useQuery, useMutation, useConnectionState, useZero }`, all bound to the shared reactive zero. Call once per app.
 - `createBindings(zero, { queries })` — pass a `queries` registry (from `defineQueries`) to enable the registry getter form: `useQuery((queries) => queries.allItems())`. When no registry is passed, `useQuery` only takes the zero-argument signal.
 - `createBindings(zero, { mutators })` — pass a `mutators` registry (from `defineMutators`) to inject it into the bound mutation callback: `useMutation(({ mutators }, item) => mutators.addItem(item))`. The registry must be the same one passed to `new Zero({ mutators })`; without it, the callback's `mutators` is `never`.
+- Bound `useConnectionState()` → `Ref<ConnectionState>`, the `useConnectionState` composable pre-bound to the shared zero (no arguments).
+- Bound `useZero()` → `ComputedRef<Zero>`, the shared reactive zero itself for direct access.
 - `useConnectionState(zero)` → `Ref<ConnectionState>` from `zero.connection.state`, subscribed on mount and unsubscribed on unmount.
 
 ## License
