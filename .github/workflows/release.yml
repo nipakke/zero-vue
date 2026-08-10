@@ -54,5 +54,40 @@ jobs:
           title: "chore: release packages"
           version: pnpm version -r
           publish: pnpm ci:publish
+          # changesets/action can only create GitHub releases/tags when the
+          # publish command is the Changesets CLI (it writes CHANGESETS_OUTPUT).
+          # `pnpm publish` doesn't, so those are disabled here and the release
+          # is created in the step below.
+          create-github-releases: false
+          push-git-tags: false
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+
+      # Create the GitHub release for the newly published version. Self-gated:
+      # skip when the tag already exists or CHANGELOG.md has no entry for the
+      # current version, so this is a no-op on the version-PR-creation push and
+      # only fires once the release PR (with the bumped version + changelog)
+      # has merged and publish has run.
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          version="$(node -p 'require("./package.json").version')"
+          if git rev-parse "refs/tags/v${version}" >/dev/null 2>&1; then
+            echo "Release v${version} already exists; skipping"
+            exit 0
+          fi
+          awk -v v="$version" '
+            /^## / { if (found) exit; if ($2 == v) found = 1; next }
+            found { print }
+          ' CHANGELOG.md > /tmp/release-notes.md
+          if [ ! -s /tmp/release-notes.md ]; then
+            echo "No CHANGELOG entry for ${version}; skipping"
+            exit 0
+          fi
+          gh release create "v${version}" \
+            --target main \
+            --title "@nipakke/zero-vue@${version}" \
+            --notes-file /tmp/release-notes.md
+
