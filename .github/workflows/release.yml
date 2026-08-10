@@ -27,6 +27,12 @@ jobs:
           node-version: "24"
           cache: true
 
+      # Put pnpm on PATH so the changesets action's `pnpm version -r` subprocess
+      # can find it (setup-vp provides `vp`, not a PATH `pnpm` binary).
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.21.0
+
       - run: vp install
 
       - name: Generate GitHub App Token
