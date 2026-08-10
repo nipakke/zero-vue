@@ -2,57 +2,54 @@ name: Release
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+
+concurrency: ${{ github.workflow }}-${{ github.ref }}
 
 permissions:
-  contents: write
-  pull-requests: write
-  id-token: write # npm provenance
-
-concurrency:
-  group: release
-  cancel-in-progress: false
+  id-token: write
+  contents: read
 
 jobs:
   release:
+    name: Release
     runs-on: ubuntu-latest
     environment: prod
+
     steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - uses: voidzero-dev/setup-vp@v1.17.0
-        with:
-          node-version: "24"
-          cache: true
-
-      # Put pnpm on PATH so the changesets action's `pnpm version -r` subprocess
-      # can find it (setup-vp provides `vp`, not a PATH `pnpm` binary).
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 11.21.0
-
-      - run: vp install
-
-      - name: Generate GitHub App Token
-        id: app-token
+      - name: Generate token
         uses: actions/create-github-app-token@v3
+        id: app-token
         with:
           client-id: ${{ vars.APP_CLIENT_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
-      # On push with pending intents: runs `pnpm version -r`, commits the bumps
-      # + CHANGELOG + ledger, opens/updates the release PR.
-      # When that PR merges (intents consumed): runs `pnpm ci:publish`, which
-      # publishes only unpublished packages (safe no-op otherwise).
-      - name: Create Release PR or Publish
+      - name: Checkout Repo
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+          persist-credentials: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version: "24"
+          cache: true
+
+      - name: Install Dependencies
+        run: vp install
+
+      - name: Build packages
+        run: vp run build
+
+      - name: Create Release Pull Request or Publish to npm
         id: changesets
         uses: changesets/action@v1
         with:
           commit: "chore: update versions"
           title: "chore: release packages"
-          version: pnpm version -r
-          publish: pnpm ci:publish
+          publish: vp exec changeset publish
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
