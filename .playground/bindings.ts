@@ -11,4 +11,4 @@ export const zero = new Zero({
   mutators,
 });
 
-export const { useQuery, useMutation } = createBindings(zero, { mutators });
+export const { useQuery, useMutator } = createBindings(zero, { mutators });

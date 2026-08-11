@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vite-plus/test";
 import {
-  useMutation,
+  useMutator,
   MutationTimeoutError,
   MutationError,
   DEFAULT_MUTATION_TIMEOUT_MS,
@@ -70,7 +70,7 @@ const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 // output clean.
 const silentLogSink = { log: () => {} };
 
-describe("useMutation", () => {
+describe("useMutator", () => {
   test("tracks isPending and delivers data via a registry mutator", async () => {
     const z = new Zero({
       server: null,
@@ -81,9 +81,7 @@ describe("useMutation", () => {
       mutators,
     });
 
-    const { mutate, isPending, error } = useMutation(z, (item: { id: number; name: string }) =>
-      mutators.addItem(item),
-    );
+    const { mutate, isPending, error } = useMutator(z, () => mutators.addItem);
 
     const result = mutate({ id: 1, name: "alpha" });
     expect(isPending.value).toBe(true);
@@ -112,11 +110,7 @@ describe("useMutation", () => {
     // rejects), so the only genuine rejection the composable tracks is the
     // timeout race. A `hang` mutator leaves the client promise unsettled, so
     // the timeout fires and its rejection surfaces via the `error` ref.
-    const { mutate, isPending, error } = useMutation(
-      z,
-      (item: { id: number; name: string }) => mutators.hang(item),
-      { timeout: 50 },
-    );
+    const { mutate, isPending, error } = useMutator(z, () => mutators.hang, { timeout: 50 });
 
     mutate({ id: 1, name: "x" });
     expect(isPending.value).toBe(true);
@@ -138,9 +132,7 @@ describe("useMutation", () => {
       mutators,
     });
 
-    const { mutate, isPending, error } = useMutation(z, (item: { id: number; name: string }) =>
-      mutators.fail(item),
-    );
+    const { mutate, isPending, error } = useMutator(z, () => mutators.fail);
 
     // Zero normalizes custom-mutator failures into *resolved* error details
     // (`{type: 'error', error: {message}}`), so without `throwOnError: false`
@@ -162,11 +154,9 @@ describe("useMutation", () => {
       mutators,
     });
 
-    const { mutate, isPending, error } = useMutation(
-      z,
-      (item: { id: number; name: string }) => mutators.fail(item),
-      { throwOnError: false },
-    );
+    const { mutate, isPending, error } = useMutator(z, () => mutators.fail, {
+      throwOnError: false,
+    });
 
     const result = await mutate({ id: 1, name: "x" }).client;
     await flush();
@@ -186,11 +176,7 @@ describe("useMutation", () => {
       mutators,
     });
 
-    const { mutate, isPending, error } = useMutation(
-      z,
-      (item: { id: number; name: string }) => mutators.hang(item),
-      { timeout: 50 },
-    );
+    const { mutate, isPending, error } = useMutator(z, () => mutators.hang, { timeout: 50 });
 
     mutate({ id: 1, name: "x" });
     expect(isPending.value).toBe(true);
@@ -201,7 +187,7 @@ describe("useMutation", () => {
     expect(error.value).toBeInstanceOf(MutationTimeoutError);
   });
 
-  test("onMutationError fires with kind 'mutation' when the mutation fails", async () => {
+  test("onError fires with kind 'mutation' when the mutation fails", async () => {
     const z = new Zero({
       server: null,
       userID: "test",
@@ -212,11 +198,9 @@ describe("useMutation", () => {
     });
 
     const errors: Error[] = [];
-    const { mutate, error } = useMutation(
-      z,
-      (item: { id: number; name: string }) => mutators.fail(item),
-      { onMutationError: (e) => errors.push(e) },
-    );
+    const { mutate, error } = useMutator(z, () => mutators.fail, {
+      onError: ({ error }) => errors.push(error),
+    });
 
     await expect(mutate({ id: 1, name: "x" }).client).rejects.toThrow("boom");
     await flush();
@@ -230,7 +214,35 @@ describe("useMutation", () => {
     expect(error.value).toBe(errors[0]);
   });
 
-  test("onMutationError does not fire on success", async () => {
+  test("onError exposes the mutator's arguments object and name", async () => {
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+      mutators,
+    });
+
+    const seen: { id: number; name: string }[] = [];
+    const seenNames: string[] = [];
+    const { mutate } = useMutator(z, () => mutators.fail, {
+      onError: ({ args, mutatorName }) => {
+        seen.push(args);
+        seenNames.push(mutatorName);
+      },
+    });
+
+    await expect(mutate({ id: 7, name: "zeta" }).client).rejects.toThrow("boom");
+    await flush();
+
+    // `args` is the single object the mutator was called with (no tuple), and
+    // `mutatorName` identifies which mutator settled.
+    expect(seen).toEqual([{ id: 7, name: "zeta" }]);
+    expect(seenNames).toEqual(["fail"]);
+  });
+
+  test("onError does not fire on success", async () => {
     const z = new Zero({
       server: null,
       userID: "test",
@@ -241,11 +253,9 @@ describe("useMutation", () => {
     });
 
     const errors: Error[] = [];
-    const { mutate, error } = useMutation(
-      z,
-      (item: { id: number; name: string }) => mutators.addItem(item),
-      { onMutationError: (e) => errors.push(e) },
-    );
+    const { mutate, error } = useMutator(z, () => mutators.addItem, {
+      onError: ({ error }) => errors.push(error),
+    });
 
     await mutate({ id: 1, name: "alpha" }).client;
     await flush();
@@ -254,7 +264,7 @@ describe("useMutation", () => {
     expect(error.value).toBeNull();
   });
 
-  test("onMutationError receives a MutationTimeoutError when the tracked promise times out", async () => {
+  test("onError receives a MutationTimeoutError when the tracked promise times out", async () => {
     const z = new Zero({
       server: null,
       userID: "test",
@@ -265,11 +275,10 @@ describe("useMutation", () => {
     });
 
     const errors: Error[] = [];
-    const { mutate, error } = useMutation(
-      z,
-      (item: { id: number; name: string }) => mutators.hang(item),
-      { timeout: 50, onMutationError: (e) => errors.push(e) },
-    );
+    const { mutate, error } = useMutator(z, () => mutators.hang, {
+      timeout: 50,
+      onError: ({ error }) => errors.push(error),
+    });
 
     mutate({ id: 1, name: "x" });
     await new Promise((r) => setTimeout(r, 100)); // > 50ms timeout
@@ -283,7 +292,7 @@ describe("useMutation", () => {
     expect(DEFAULT_MUTATION_TIMEOUT_MS).toBe(5_000);
   });
 
-  test("per-call timeout overrides the composable timeout", async () => {
+  test("onSettled fires on success with error undefined", async () => {
     const z = new Zero({
       server: null,
       userID: "test",
@@ -293,20 +302,120 @@ describe("useMutation", () => {
       mutators,
     });
 
-    const { mutate, isPending, error } = useMutation(
-      z,
-      (item: { id: number; name: string }) => mutators.hang(item),
-      { timeout: 200 },
-    );
+    const settled: Array<{
+      args: { id: number; name: string };
+      error?: Error;
+      mutatorName: string;
+    }> = [];
+    const { mutate } = useMutator(z, () => mutators.addItem, {
+      onSettled: (info) => settled.push(info),
+    });
 
-    mutate({ id: 1, name: "x" }, { timeout: 20 });
-    expect(isPending.value).toBe(true);
+    await mutate({ id: 1, name: "alpha" }).client;
+    await flush();
 
-    await new Promise((r) => setTimeout(r, 60)); // > 20ms local timeout, < 200ms global
+    expect(settled).toHaveLength(1);
+    expect(settled[0]?.args).toEqual({ id: 1, name: "alpha" });
+    expect(settled[0]?.error).toBeUndefined();
+    expect(settled[0]?.mutatorName).toBe("addItem");
+  });
 
-    expect(isPending.value).toBe(false);
-    expect(error.value).toBeInstanceOf(MutationTimeoutError);
-    expect(error.value?.message).toContain("20ms");
+  test("onSettled fires on failure with the branded error", async () => {
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+      mutators,
+    });
+
+    const settled: Array<{
+      args: { id: number; name: string };
+      error?: Error;
+      mutatorName: string;
+    }> = [];
+    const { mutate } = useMutator(z, () => mutators.fail, {
+      onSettled: (info) => settled.push(info),
+    });
+
+    await expect(mutate({ id: 1, name: "x" }).client).rejects.toThrow("boom");
+    await flush();
+
+    expect(settled).toHaveLength(1);
+    expect(settled[0]?.args).toEqual({ id: 1, name: "x" });
+    expect(settled[0]?.error).toBeInstanceOf(MutationError);
+  });
+
+  test("onSettled fires on timeout and onError fires first", async () => {
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+      mutators,
+    });
+
+    const order: string[] = [];
+    const { mutate } = useMutator(z, () => mutators.hang, {
+      timeout: 50,
+      onError: () => order.push("error"),
+      onSettled: () => order.push("settled"),
+    });
+
+    mutate({ id: 1, name: "x" });
+    await new Promise((r) => setTimeout(r, 100)); // > 50ms timeout
+
+    expect(order).toEqual(["error", "settled"]);
+  });
+
+  test("onSuccess fires with args and mutatorName, before onSettled", async () => {
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+      mutators,
+    });
+
+    const successes: Array<{ args: { id: number; name: string }; mutatorName: string }> = [];
+    const order: string[] = [];
+    const { mutate } = useMutator(z, () => mutators.addItem, {
+      onSuccess: (info) => {
+        successes.push(info);
+        order.push("success");
+      },
+      onSettled: () => order.push("settled"),
+    });
+
+    await mutate({ id: 1, name: "alpha" }).client;
+    await flush();
+
+    expect(successes).toEqual([{ args: { id: 1, name: "alpha" }, mutatorName: "addItem" }]);
+    expect(order).toEqual(["success", "settled"]);
+  });
+
+  test("onSuccess does not fire on failure", async () => {
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+      mutators,
+    });
+
+    const successes: unknown[] = [];
+    const { mutate } = useMutator(z, () => mutators.fail, {
+      onSuccess: (info) => successes.push(info),
+    });
+
+    await expect(mutate({ id: 1, name: "x" }).client).rejects.toThrow("boom");
+    await flush();
+
+    expect(successes).toHaveLength(0);
   });
 
   test("throwOnTimeout rejects the call's tracked promise", async () => {
@@ -319,11 +428,10 @@ describe("useMutation", () => {
       mutators,
     });
 
-    const { mutate, error } = useMutation(
-      z,
-      (item: { id: number; name: string }) => mutators.hang(item),
-      { timeout: 50, throwOnTimeout: true },
-    );
+    const { mutate, error } = useMutator(z, () => mutators.hang, {
+      timeout: 50,
+      throwOnTimeout: true,
+    });
 
     const result = mutate({ id: 1, name: "x" });
 
@@ -341,11 +449,7 @@ describe("useMutation", () => {
       mutators,
     });
 
-    const { mutate, error } = useMutation(
-      z,
-      (item: { id: number; name: string }) => mutators.fail(item),
-      { throwOnError: true },
-    );
+    const { mutate, error } = useMutator(z, () => mutators.fail, { throwOnError: true });
 
     const result = mutate({ id: 1, name: "x" });
 
@@ -353,7 +457,7 @@ describe("useMutation", () => {
     expect(error.value?.message).toBe("boom");
   });
 
-  test("per-call throwOnTimeout wins over the global default", async () => {
+  test("by default a timeout does not reject the call's promise", async () => {
     const z = new Zero({
       server: null,
       userID: "test",
@@ -363,38 +467,19 @@ describe("useMutation", () => {
       mutators,
     });
 
-    const { mutate } = useMutation(z, (item: { id: number; name: string }) => mutators.hang(item), {
-      timeout: 50,
-    });
+    // Real wall-clock waits are deliberate here: the timeout race is a real
+    // `setTimeout` on the platform clock, and this file's convention is real
+    // (not fake) timers, so deterministic time control cannot apply.
+    const { mutate, error } = useMutator(z, () => mutators.hang, { timeout: 50 });
 
-    // Global throwOnTimeout defaults to false; the per-call flag opts in.
-    const result = mutate({ id: 1, name: "x" }, { throwOnTimeout: true });
-    await expect(result.client).rejects.toBeInstanceOf(MutationTimeoutError);
-  });
-
-  test("per-call throwOnTimeout: false suppresses the call rejection", async () => {
-    const z = new Zero({
-      server: null,
-      userID: "test",
-      schema,
-      kvStore: "mem",
-      logSink: silentLogSink,
-      mutators,
-    });
-
-    const { mutate, error } = useMutation(
-      z,
-      (item: { id: number; name: string }) => mutators.hang(item),
-      { timeout: 50, throwOnTimeout: true },
-    );
-
-    const result = mutate({ id: 1, name: "x" }, { throwOnTimeout: false });
+    const result = mutate({ id: 1, name: "x" });
 
     // The composable still tracks the timeout…
     await new Promise((r) => setTimeout(r, 100));
     expect(error.value).toBeInstanceOf(MutationTimeoutError);
 
-    // …but the call's promise stays pending instead of rejecting.
+    // …but with throwOnTimeout unset (default false), the call's promise
+    // stays pending instead of rejecting.
     const outcome = await Promise.race([
       result.client.then(
         () => "settled",
@@ -415,15 +500,12 @@ describe("useMutation", () => {
       mutators,
     });
 
-    // Regression: the old option detection treated any trailing object with a
-    // `timeout` key as call options, silently dropping the field from the
-    // payload. `{id, name, timeout}` has keys beyond the option set, so it
-    // must arrive at the mutator intact.
+    // A payload may legitimately carry a `timeout` field. Since per-call
+    // options were removed, `mutate` never inspects its arguments — the whole
+    // payload (including the `timeout` field) must arrive at the mutator
+    // intact.
     receivedArgs.length = 0;
-    const { mutate, error } = useMutation(
-      z,
-      (item: { id: number; name: string; timeout: number }) => mutators.record(item),
-    );
+    const { mutate, error } = useMutator(z, () => mutators.record);
 
     const result = mutate({ id: 7, name: "timed", timeout: 123 });
     await result.client;
@@ -444,13 +526,11 @@ describe("useMutation", () => {
       mutators,
     });
 
-    // `throwOnTimeout` here is a string, not a boolean — not valid call
-    // options, so the whole object must reach the mutator as a payload.
+    // `throwOnTimeout` is just a payload field here. Since per-call options
+    // were removed, `mutate` never inspects its arguments — the whole object
+    // reaches the mutator as a payload.
     receivedArgs.length = 0;
-    const { mutate, error } = useMutation(
-      z,
-      (item: { id: number; name: string; throwOnTimeout: string }) => mutators.record(item),
-    );
+    const { mutate, error } = useMutator(z, () => mutators.record);
 
     const result = mutate({ id: 8, name: "flag", throwOnTimeout: "yes" });
     await result.client;
@@ -470,11 +550,9 @@ describe("useMutation", () => {
       mutators,
     });
 
-    // getCurrentScope() returns null outside setup()/effectScope(); useMutation
+    // getCurrentScope() returns null outside setup()/effectScope(); useMutator
     // must not register onScopeDispose and must still track mutations.
-    const { mutate, isPending } = useMutation(z, (item: { id: number; name: string }) =>
-      mutators.addItem(item),
-    );
+    const { mutate, isPending } = useMutator(z, () => mutators.addItem);
 
     const result = mutate({ id: 9, name: "outside" });
     await result.client;
@@ -496,11 +574,10 @@ describe("useMutation", () => {
 
     // With `server: null` the server promise never settles, so the timeout
     // race is the observable behavior: `awaitMode: 'server'` must not hang.
-    const { mutate, isPending, error } = useMutation(
-      z,
-      (item: { id: number; name: string }) => mutators.addItem(item),
-      { awaitMode: "server", timeout: 50 },
-    );
+    const { mutate, isPending, error } = useMutator(z, () => mutators.addItem, {
+      awaitMode: "server",
+      timeout: 50,
+    });
 
     mutate({ id: 3, name: "srv" });
     expect(isPending.value).toBe(true);
@@ -513,7 +590,7 @@ describe("useMutation", () => {
 });
 
 describe("createBindings", () => {
-  test("bound useMutation uses the shared zero", async () => {
+  test("bound useMutator uses the shared zero", async () => {
     const z = new Zero({
       server: null,
       userID: "test",
@@ -523,10 +600,8 @@ describe("createBindings", () => {
       mutators,
     });
 
-    const { useMutation } = createBindings(z);
-    const { mutate, isPending } = useMutation((_, item: { id: number; name: string }) =>
-      mutators.addItem(item),
-    );
+    const { useMutator } = createBindings(z);
+    const { mutate, isPending } = useMutator(() => mutators.addItem);
 
     const result = mutate({ id: 6, name: "bound" });
     await result.client;
@@ -536,7 +611,7 @@ describe("createBindings", () => {
     expect(rows(await z.run(createBuilder(schema).item))).toEqual([{ id: 6, name: "bound" }]);
   });
 
-  test("bound useMutation with a mutator registry", async () => {
+  test("bound useMutator with a mutator registry", async () => {
     const z = new Zero({
       server: null,
       userID: "test",
@@ -546,10 +621,8 @@ describe("createBindings", () => {
       mutators,
     });
 
-    const { useMutation } = createBindings(z, { mutators });
-    const { mutate, isPending } = useMutation(({ mutators }, item: { id: number; name: string }) =>
-      mutators.addItem(item),
-    );
+    const { useMutator } = createBindings(z, { mutators });
+    const { mutate, isPending } = useMutator((mutators) => mutators.addItem);
 
     const result = mutate({ id: 1, name: "from-registry" });
     await result.client;
@@ -561,7 +634,7 @@ describe("createBindings", () => {
     ]);
   });
 
-  test("bound useMutation accepts per-call options", async () => {
+  test("bound useMutator applies composable options", async () => {
     const z = new Zero({
       server: null,
       userID: "test",
@@ -571,12 +644,10 @@ describe("createBindings", () => {
       mutators,
     });
 
-    const { useMutation } = createBindings(z, { mutators });
-    const { mutate } = useMutation(({ mutators }, item: { id: number; name: string }) =>
-      mutators.fail(item),
-    );
+    const { useMutator } = createBindings(z, { mutators });
+    const { mutate } = useMutator((mutators) => mutators.fail, { throwOnError: true });
 
-    const result = mutate({ id: 1, name: "x" }, { throwOnError: true });
+    const result = mutate({ id: 1, name: "x" });
 
     await expect(result.client).rejects.toThrow("boom");
   });
@@ -589,21 +660,21 @@ describe("createBindings", () => {
       kvStore: "mem",
       logSink: silentLogSink,
     });
-    const { useMutation } = createBindings(z);
+    const { useMutator } = createBindings(z);
 
-    // Without a registry the callback's context has `mutators: never`, so a
-    // mutators-taking callback must not be assignable. Checked at the type
-    // level via `@ts-expect-error` — the callback is never invoked.
-    const _rejected: Parameters<typeof useMutation>[0] = (ctx) =>
-      // @ts-expect-error - no mutator registry bound, so accessing ctx.mutators is rejected.
-      ctx.mutators.addItem({ id: 1, name: "x" });
+    // Without a registry the getter's parameter is `never`, so a
+    // mutators-taking getter must not be assignable. Checked at the type
+    // level via `@ts-expect-error` — the getter is never invoked.
+    const _rejected: Parameters<typeof useMutator>[0] = (mutators) =>
+      // @ts-expect-error - no mutator registry bound, so accessing mutators.addItem is rejected.
+      mutators.addItem;
     expect(_rejected).toBeTypeOf("function");
 
-    // The mutate-only form still works.
-    useMutation((_, item: { id: number; name: string }) => mutators.addItem(item));
+    // The registry-closing form still works.
+    useMutator(() => mutators.addItem);
   });
 
-  test("bindings-level onMutationError fires on bound mutation failure", async () => {
+  test("bindings-level onError fires on bound mutation failure", async () => {
     const z = new Zero({
       server: null,
       userID: "test",
@@ -614,13 +685,11 @@ describe("createBindings", () => {
     });
 
     const errors: Error[] = [];
-    const { useMutation } = createBindings(z, {
+    const { useMutator } = createBindings(z, {
       mutators,
-      onMutationError: (e) => errors.push(e),
+      onMutationError: ({ error }) => errors.push(error),
     });
-    const { mutate } = useMutation(({ mutators }, item: { id: number; name: string }) =>
-      mutators.fail(item),
-    );
+    const { mutate } = useMutator((mutators) => mutators.fail);
 
     await expect(mutate({ id: 1, name: "x" }).client).rejects.toThrow("boom");
     await flush();
@@ -630,7 +699,7 @@ describe("createBindings", () => {
     expect(errors[0]?.message).toBe("boom");
   });
 
-  test("local and bindings-level onMutationError both fire, local first", async () => {
+  test("local onError and bindings-level onError both fire, local first", async () => {
     const z = new Zero({
       server: null,
       userID: "test",
@@ -641,14 +710,13 @@ describe("createBindings", () => {
     });
 
     const order: string[] = [];
-    const { useMutation } = createBindings(z, {
+    const { useMutator } = createBindings(z, {
       mutators,
       onMutationError: () => order.push("global"),
     });
-    const { mutate } = useMutation(
-      ({ mutators }, item: { id: number; name: string }) => mutators.fail(item),
-      { onMutationError: () => order.push("local") },
-    );
+    const { mutate } = useMutator((mutators) => mutators.fail, {
+      onError: () => order.push("local"),
+    });
 
     await expect(mutate({ id: 1, name: "x" }).client).rejects.toThrow("boom");
     await flush();
@@ -656,7 +724,57 @@ describe("createBindings", () => {
     expect(order).toEqual(["local", "global"]);
   });
 
-  test("bound useMutation with only a local onMutationError fires once", async () => {
+  test("bindings-level onMutationSuccess fires on bound mutation success", async () => {
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+      mutators,
+    });
+
+    const successes: Array<{ args: unknown; mutatorName: string }> = [];
+    const { useMutator } = createBindings(z, {
+      mutators,
+      onMutationSuccess: (info) => successes.push(info),
+    });
+    const { mutate } = useMutator((mutators) => mutators.addItem);
+
+    await mutate({ id: 3, name: "c" }).client;
+    await flush();
+
+    expect(successes).toHaveLength(1);
+    expect(successes[0]?.args).toEqual({ id: 3, name: "c" });
+    expect(successes[0]?.mutatorName).toBe("addItem");
+  });
+
+  test("local onSuccess and bindings-level onMutationSuccess both fire, local first", async () => {
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+      mutators,
+    });
+
+    const order: string[] = [];
+    const { useMutator } = createBindings(z, {
+      mutators,
+      onMutationSuccess: () => order.push("global"),
+    });
+    const { mutate } = useMutator((mutators) => mutators.addItem, {
+      onSuccess: () => order.push("local"),
+    });
+
+    await mutate({ id: 4, name: "d" }).client;
+    await flush();
+
+    expect(order).toEqual(["local", "global"]);
+  });
+
+  test("bound useMutator with only a local onError fires once", async () => {
     const z = new Zero({
       server: null,
       userID: "test",
@@ -669,11 +787,10 @@ describe("createBindings", () => {
     // No bindings-level observer: the composed callback must skip the global
     // call and fire exactly once.
     const errors: Error[] = [];
-    const { useMutation } = createBindings(z, { mutators });
-    const { mutate } = useMutation(
-      ({ mutators }, item: { id: number; name: string }) => mutators.fail(item),
-      { onMutationError: (e) => errors.push(e) },
-    );
+    const { useMutator } = createBindings(z, { mutators });
+    const { mutate } = useMutator((mutators) => mutators.fail, {
+      onError: ({ error }) => errors.push(error),
+    });
 
     await expect(mutate({ id: 1, name: "x" }).client).rejects.toThrow("boom");
     await flush();
@@ -682,7 +799,7 @@ describe("createBindings", () => {
     expect(errors[0]).toBeInstanceOf(MutationError);
   });
 
-  test("bound useMutation honors getter options through the composition", async () => {
+  test("bound useMutator honors getter options through the composition", async () => {
     const z = new Zero({
       server: null,
       userID: "test",
@@ -695,10 +812,10 @@ describe("createBindings", () => {
     // The composed options wrapper must resolve a getter-form options
     // argument just like the raw composable does.
     const errors: Error[] = [];
-    const { useMutation } = createBindings(z, { mutators });
-    const { mutate } = useMutation(
-      ({ mutators }, item: { id: number; name: string }) => mutators.fail(item),
-      () => ({ onMutationError: (e) => errors.push(e) }),
+    const { useMutator } = createBindings(z, { mutators });
+    const { mutate } = useMutator(
+      (mutators) => mutators.fail,
+      () => ({ onError: ({ error }) => errors.push(error) }),
     );
 
     await expect(mutate({ id: 1, name: "x" }).client).rejects.toThrow("boom");
@@ -709,7 +826,7 @@ describe("createBindings", () => {
   });
 });
 
-describe("useMutation — reset", () => {
+describe("useMutator — reset", () => {
   test("reset clears error and isPending", async () => {
     const z = new Zero({
       server: null,
@@ -720,11 +837,9 @@ describe("useMutation — reset", () => {
       mutators,
     });
 
-    const { mutate, isPending, error, reset } = useMutation(
-      z,
-      (item: { id: number; name: string }) => mutators.fail(item),
-      { throwOnError: false },
-    );
+    const { mutate, isPending, error, reset } = useMutator(z, () => mutators.fail, {
+      throwOnError: false,
+    });
 
     await mutate({ id: 1, name: "x" }).client;
     await flush();

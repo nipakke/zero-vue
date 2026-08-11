@@ -2,7 +2,9 @@
 
 A Vue 3 wrapper around [Zero](https://zero.rocicorp.dev/) — query local, offline-first data reactively.
 
-`useQuery` turns a query signal into reactive `data` / `error` / `status`. `useMutation` runs registered Zero mutators with `isPending` / `error` tracking. `createBindings` binds a Zero instance once and shares it across every query and mutation. `useConnectionState` exposes connection status.
+`useQuery` turns a query signal into reactive `data` / `error` / `status`. `useMutator` runs registered Zero mutators with `isPending` / `error` tracking. `createBindings` binds a Zero instance once and shares it across every query and mutation. `useConnectionState` exposes connection status.
+
+> **Before 1.0:** the API is still stabilizing — breaking changes can ship in any minor version without a major bump. Watch the [changelog](./CHANGELOG.md) and release notes for breaking changes as you upgrade.
 
 ## Install
 
@@ -101,35 +103,37 @@ const { data: openItems, status } = useQuery((q) => q.open());
 
 ## Mutations (`defineMutators`)
 
-Zero runs the mutators you pass to the `Zero` constructor. `useMutation` takes a callback that returns a `MutateRequest` from one of those mutators, executes it against the zero, and tracks the result.
+Zero runs the mutators you pass to the `Zero` constructor. `useMutator` takes a getter that returns one of those mutators — a reference, not a call — executes it against the zero, and tracks the result. Because the getter returns the mutator itself, the mutator's argument type is inferred onto `mutate`.
 
 Use the standalone composable and close over your own registry:
 
 ```ts
 import { defineMutators } from "@rocicorp/zero";
-import { useMutation } from "@nipakke/zero-vue";
+import { useMutator } from "@nipakke/zero-vue";
 
 // Registry of mutators (same shape as `new Zero({ mutators, ... })`).
 const mutators = defineMutators(schema, {
   addItem: (tx, item: { id: number; title: string; done: boolean }) => tx.item.insert(item),
 });
 
-const { mutate, isPending, error } = useMutation(zero, (item) => mutators.addItem(item));
+// `mutate` takes `{ id, title, done }` — inferred from `mutators.addItem`.
+const { mutate, isPending, error } = useMutator(zero, () => mutators.addItem);
 ```
 
-Or pass the same registry to `createBindings` — the bound `useMutation` injects it into the callback as `{ mutators }`, so the zero and registry are each passed once:
+Or pass the same registry to `createBindings` — the bound `useMutator` injects it into the getter, so the zero and registry are each passed once:
 
 ```ts
 // zero.ts
 export const zero = new Zero({ server: null, userID: "user-1", schema, mutators, kvStore: "idb" });
-export const { useQuery, useMutation } = createBindings(zero, { queries, mutators });
+export const { useQuery, useMutator } = createBindings(zero, { queries, mutators });
 ```
 
 ```vue
 <script setup lang="ts">
-import { useMutation } from "./zero.ts";
+import { useMutator } from "./zero.ts";
 
-const { mutate, isPending, error } = useMutation(({ mutators }, item) => mutators.addItem(item));
+// `mutators` is the bound registry; `mutate` takes `addItem`'s argument type.
+const { mutate, isPending, error } = useMutator((mutators) => mutators.addItem);
 
 async function add(title: string) {
   await mutate({ id: Date.now(), title, done: false });
@@ -137,27 +141,35 @@ async function add(title: string) {
 </script>
 ```
 
-The mutators registry passed to `createBindings` must be the **same** one given to `new Zero({ mutators })` — Zero executes the mutators it was constructed with; the bindings registry only supplies the typed callback surface. Without a mutators registry, the callback's `mutators` is `never`, so you must return a `MutateRequest` from a registry you hold yourself: `useMutation((_, item) => myMutators.addItem(item))`.
+The mutators registry passed to `createBindings` must be the **same** one given to `new Zero({ mutators })` — Zero executes the mutators it was constructed with; the bindings registry only supplies the typed callback surface. Without a mutators registry, the getter's parameter is `never`, so you must return a `Mutator` from a registry you hold yourself: `useMutator(() => myMutators.addItem)`.
 
-`mutate(...args, options?)` resolves with the `MutatorResult` (`{ client, server }`); by default it tracks the `client` promise. `isPending` is `true` while the tracked promise is in flight, and `error` holds the failure (a `MutationTimeoutError` if it exceeded the timeout). `reset()` clears the error and pending state.
+`mutate(...args)` resolves with the `MutatorResult` (`{ client, server }`); by default it tracks the `client` promise. `isPending` is `true` while the tracked promise is in flight, and `error` holds the failure (a `MutationTimeoutError` if it exceeded the timeout). `reset()` clears the error and pending state.
 
-By default `mutate` **throws on mutation errors**: if the mutation itself fails (e.g. a custom mutator throws), the returned promise rejects, so `await mutate(...)` throws and the same error is also reported via the `error` ref. Pass `throwOnError: false` (globally or per call) to have the call resolve with the error details instead of rejecting.
+By default `mutate` **throws on mutation errors**: if the mutation itself fails (e.g. a custom mutator throws), the returned promise rejects, so `await mutate(...)` throws and the same error is also reported via the `error` ref. Pass `throwOnError: false` to have the call resolve with the error details instead of rejecting.
 
-Every failure — timeout or mutation error — also fires the `onMutationError` observer (`options.onMutationError`, and/or the `createBindings`-level one for bound composables; local fires first, then global). It receives the same branded error that lands in the `error` ref — check `instanceof` to tell the kinds apart:
+Every failure — timeout or mutation error — also fires the `onError` observer (`options.onError`, and/or the `createBindings`-level `onMutationError` for bound composables; local fires first, then global). It receives a `{ error, args, mutatorName }` object: the same branded error that lands in the `error` ref — check `instanceof` to tell the kinds apart — plus the mutator's arguments object and name (identifies which concurrent mutation settled). `onSuccess` fires when a mutation succeeds (with `{ args, mutatorName }`), and `onSettled` fires on every settle (success or failure) with `{ args, error?, mutatorName }` (`error` is `undefined` on success):
 
 ```ts
 import { MutationTimeoutError, MutationError } from "@nipakke/zero-vue";
 
-useMutation(zero, (item) => mutators.addItem(item), {
-  onMutationError(error) {
+useMutator(zero, () => mutators.addItem, {
+  onError({ error, args, mutatorName }) {
     if (error instanceof MutationTimeoutError) {
-      analytics.track("mutation_timeout", { message: error.message });
+      analytics.track("mutation_timeout", { message: error.message, args, mutatorName });
     } else if (error instanceof MutationError) {
       analytics.track("mutation_error", {
         message: error.message,
+        args,
+        mutatorName,
         cause: error.cause, // Zero's raw {type: "app" | "zero", message, details?}
       });
     }
+  },
+  onSuccess({ args, mutatorName }) {
+    // the write was applied
+  },
+  onSettled({ args, error, mutatorName }) {
+    // teardown/logging on both paths; error is undefined on success
   },
 });
 ```
@@ -167,10 +179,10 @@ The observer is a pure listener: it fires regardless of `throwOnTimeout`/`throwO
 ## API
 
 - `useQuery(zero, querySignal, options?)` → `{ data, error, status }`. `zero` may be a `Zero`, `ref`, or getter; `querySignal` is a getter returning a `Query` (a falsy value disables the query → `data: undefined`, `status: "disabled"`); `options` is `{ ttl?: TTL }` or a getter (default 5 min). `status` is `"complete" | "unknown" | "error" | "disabled"`.
-- `useMutation(zero, mutationFn, options?)` → `{ mutate, isPending, error, reset }`. `mutationFn(...args)` returns a `MutateRequest` from a registered custom mutator; `mutate(...args, options?)` executes it against the current zero and returns the `MutatorResult`. `options` is `{ awaitMode?: "client" | "server", timeout?: number, throwOnTimeout?: boolean, throwOnError?: boolean, onMutationError?: (error: Error) => void }` (timeout defaults to 5s; `Infinity` disables it; `throwOnError` defaults to `true` — the call's promise rejects when the mutation fails; `throwOnTimeout` defaults to `false`; `onMutationError` observes every failure — `instanceof MutationTimeoutError` vs `instanceof MutationError` tells timeouts from mutation failures). Each `mutate` call may override options by passing a trailing `MutationCallOptions` object — a trailing argument counts as call options only when it consists solely of those option keys with matching value types, so payloads that merely contain a `timeout`-named field (or carry option names with other value types) pass through to the mutator untouched.
-- `createBindings(zero)` → `{ useQuery, useMutation, useConnectionState, useZero }`, all bound to the shared reactive zero. Call once per app.
+- `useMutator(zero, mutatorGetter, options?)` → `{ mutate, isPending, error, reset }`. `mutatorGetter` returns a `Mutator` from a registered custom mutator — a reference, not a call (e.g. `() => mutators.addItem`); the selected mutator's argument type is inferred onto `mutate(...args)`, which executes it against the current zero and returns the `MutatorResult`. `options` is `{ awaitMode?: "client" | "server", timeout?: number, throwOnTimeout?: boolean, throwOnError?: boolean, onError?: (info: { error: Error; args: TArgs; mutatorName: string }) => void, onSuccess?: (info: { args: TArgs; mutatorName: string }) => void, onSettled?: (info: { args: TArgs; error?: Error; mutatorName: string }) => void }` (timeout defaults to 5s; `Infinity` disables it; `throwOnError` defaults to `true` — the call's promise rejects when the mutation fails; `throwOnTimeout` defaults to `false`; `onError` observes every failure — `instanceof MutationTimeoutError` vs `instanceof MutationError` tells timeouts from mutation failures — `onSuccess` fires on success, and `onSettled` observes every settle with `error` `undefined` on success). All options are set on `useMutator`, not per call — `mutate(...args)` takes only the mutator's arguments, so a payload that carries a `timeout`-named field is never mistaken for options.
+- `createBindings(zero)` → `{ useQuery, useMutator, useConnectionState, useZero }`, all bound to the shared reactive zero. Call once per app.
 - `createBindings(zero, { queries })` — pass a `queries` registry (from `defineQueries`) to enable the registry getter form: `useQuery((queries) => queries.allItems())`. When no registry is passed, `useQuery` only takes the zero-argument signal.
-- `createBindings(zero, { mutators, onMutationError })` — pass a `mutators` registry (from `defineMutators`) to inject it into the bound mutation callback: `useMutation(({ mutators }, item) => mutators.addItem(item))`. The registry must be the same one passed to `new Zero({ mutators })`; without it, the callback's `mutators` is `never`. `onMutationError` is an app-wide mutation failure observer: it fires for every bound mutation's failure (after the per-composable callback, if any) with the same branded error — `instanceof MutationTimeoutError` vs `instanceof MutationError` — ideal for analytics and logging.
+- `createBindings(zero, { mutators, onMutationError, onMutationSuccess, onMutationSettled })` — pass a `mutators` registry (from `defineMutators`) to inject it into the bound mutator getter: `useMutator((mutators) => mutators.addItem)`. The registry must be the same one passed to `new Zero({ mutators })`; without it, the getter's `mutators` parameter is `never`. The app-wide observers (`onMutationError`, `onMutationSuccess`, `onMutationSettled`) have the same shape and semantics as the per-composable ones (each receives `{ args, mutatorName }`, plus `error` on `onMutationError`/`onMutationSettled`), with `args` typed `unknown` because different bound mutators have different arg types. They fire for every bound mutation's settle, after the per-composable callback, if any — ideal for analytics and logging.
 - Bound `useConnectionState()` → `Ref<ConnectionState>`, the `useConnectionState` composable pre-bound to the shared zero (no arguments).
 - Bound `useZero()` → `ComputedRef<Zero>`, the shared reactive zero itself for direct access.
 - `useConnectionState(zero)` → `Ref<ConnectionState>` from `zero.connection.state`, subscribed on mount and unsubscribed on unmount.
