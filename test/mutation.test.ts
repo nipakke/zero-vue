@@ -231,8 +231,11 @@ describe("useMutator", () => {
   test("onError exposes the mutator's arguments object, name, and kind", async () => {
     const z = makeZero();
 
-    const seen: Array<{ args: { id: number; name: string }; mutatorName: string; kind: MutationKind }> =
-      [];
+    const seen: Array<{
+      args: { id: number; name: string };
+      mutatorName: string;
+      kind: MutationKind;
+    }> = [];
     const { mutate } = useMutator(z, () => mutators.fail, {
       onError: ({ args, mutatorName, kind }) => {
         seen.push({ args, mutatorName, kind });
@@ -346,8 +349,11 @@ describe("useMutator", () => {
   test("onSuccess fires with args, mutatorName, kind client, before onSettled", async () => {
     const z = makeZero();
 
-    const successes: Array<{ args: { id: number; name: string }; mutatorName: string; kind: MutationKind }> =
-      [];
+    const successes: Array<{
+      args: { id: number; name: string };
+      mutatorName: string;
+      kind: MutationKind;
+    }> = [];
     const order: string[] = [];
     const { mutate } = useMutator(z, () => mutators.addItem, {
       onSuccess: (info) => {
@@ -503,7 +509,11 @@ describe("useMutator — live server", () => {
 
   test("an offline-but-configured server mirrors the client (no server leg)", async () => {
     const clientP = Promise.resolve<MutatorResultDetails>({ type: "success" });
-    const offlineFake = makeFakeZero({ name: "disconnected", client: clientP, server: hangPromise() });
+    const offlineFake = makeFakeZero({
+      name: "disconnected",
+      client: clientP,
+      server: hangPromise(),
+    });
 
     const kinds: MutationKind[] = [];
     const { mutate, client, server } = useMutator(offlineFake as never, () => mutators.addItem, {

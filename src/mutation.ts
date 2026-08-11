@@ -76,12 +76,7 @@ export type UseMutatorOptions<TArgs = unknown> = {
    * logging. When the composable comes from `createBindings`, the
    * bindings-level `onError` fires too, after this one.
    */
-  onError?: (info: {
-    error: Error;
-    args: TArgs;
-    mutatorName: string;
-    kind: MutationKind;
-  }) => void;
+  onError?: (info: { error: Error; args: TArgs; mutatorName: string; kind: MutationKind }) => void;
   /**
    * Observer called whenever a leg succeeds — a tracked promise resolved with
    * `{type: 'success'}`. Receives `args`, the mutator's arguments object,
