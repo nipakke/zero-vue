@@ -3,7 +3,7 @@ import { computed, ref } from "vue";
 import { type UseQueryOptions } from "@nipakke/zero-vue";
 import { createBuilder } from "@rocicorp/zero";
 import { schema, type ItemRow } from "../schema.ts";
-import { useQuery, useMutation } from "../bindings.ts";
+import { useQuery, useMutator } from "../bindings.ts";
 import QueryInspector from "./QueryInspector.vue";
 
 // --- Interactive inputs that drive the query signal ------------------------
@@ -46,24 +46,16 @@ const total = computed(() => allRows.value?.length ?? 0);
 const active = computed(() => activeRows.value?.length ?? 0);
 const done = computed(() => doneRows.value?.length ?? 0);
 
-// --- Mutations via useMutation -------------------------------------------------
-const { mutate: insertItem, isPending: isAdding } = useMutation(({ mutators }, title: string) => {
-  const id = Date.now();
-  return mutators.addItem({ id, title, done: false, createdAt: id });
-});
-
-const { mutate: toggleMutate } = useMutation(({ mutators }, args: { id: number; done: boolean }) =>
-  mutators.toggleItem(args),
-);
-
-const { mutate: deleteMutate } = useMutation(({ mutators }, id: number) =>
-  mutators.deleteItem({ id }),
-);
+// --- Mutations via useMutator -------------------------------------------------
+const { mutate: insertItem, isPending: isAdding } = useMutator((mutators) => mutators.addItem);
+const { mutate: toggleMutate } = useMutator((mutators) => mutators.toggleItem);
+const { mutate: deleteMutate } = useMutator((mutators) => mutators.deleteItem);
 
 const addItem = () => {
   const title = newTitle.value.trim();
   if (!title) return;
-  insertItem(title);
+  const id = Date.now();
+  insertItem({ id, title, done: false, createdAt: id });
   newTitle.value = "";
 };
 
@@ -72,12 +64,12 @@ const toggleItem = (row: ItemRow) => {
 };
 
 const removeItem = (row: ItemRow) => {
-  void deleteMutate(row.id);
+  void deleteMutate({ id: row.id });
 };
 
 const clearDone = () => {
   for (const row of doneRows.value ?? []) {
-    void deleteMutate(row.id);
+    void deleteMutate({ id: row.id });
   }
 };
 

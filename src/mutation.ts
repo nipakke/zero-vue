@@ -14,15 +14,21 @@ import type {
   DefaultContext,
   DefaultSchema,
   MutateRequest,
+  Mutator,
   MutatorResult,
   MutatorResultDetails,
   Zero,
 } from "@rocicorp/zero";
 
-/** Default `UseMutationOptions.timeout` / `MutationCallOptions.timeout` — 5 seconds. */
+/** Default `UseMutatorOptions.timeout` — 5 seconds. */
 export const DEFAULT_MUTATION_TIMEOUT_MS = 5_000;
 
-/** Set as `error` when the tracked promise exceeds `timeout`. Checkable via `instanceof`. */
+/**
+ * Set as `error` when a tracked promise exceeds `timeout`. Checkable via
+ * `instanceof`, alongside `MutationError` for app failures. `kind` (from the
+ * callback info or which side's `error` ref it landed in) tells you whether it
+ * was the client leg or the server leg that timed out.
+ */
 export class MutationTimeoutError extends Error {
   constructor(ms: number) {
     super(`Mutation timed out after ${ms}ms`);
@@ -30,7 +36,7 @@ export class MutationTimeoutError extends Error {
 }
 
 /**
- * Set as `error` when the mutation itself failed — it resolved with Zero
+ * Set as `error` when the mutation itself failed — a leg resolved with Zero
  * error details (`{type: 'error', ...}`) or its promise rejected. Checkable
  * via `instanceof`, alongside `MutationTimeoutError` for timeouts. When the
  * failure was normalized into resolved error details, `cause` carries Zero's
@@ -42,189 +48,211 @@ export class MutationError extends Error {
   }
 }
 
+/** Which promise of the `MutatorResult` a callback/ref describes. */
+export type MutationKind = "client" | "server";
+
+/** Options for `useMutator`. `TArgs` is the mutator's single arguments object. */
+export type UseMutatorOptions<TArgs = unknown> = {
+  /**
+   * Max ms to wait for either leg (client or server) before giving up. On
+   * timeout that leg's `isPending` becomes `false`, its `error` is set to a
+   * `MutationTimeoutError`, and `onError`/`onSettled` fire with the leg's
+   * `kind`. The underlying `MutatorResult` promises are NOT cancelled (JS
+   * promises can't be cancelled) — only the composable's tracking stops.
+   * Default: `DEFAULT_MUTATION_TIMEOUT_MS` (5s). Pass `Infinity` to disable
+   * the timeout entirely.
+   */
+  timeout?: number;
+  /**
+   * Observer called whenever a leg fails — a tracked promise timed out or the
+   * mutation itself failed on that leg. Receives an info object: `error` is the
+   * same branded `Error` set on that leg's `error` ref (`instanceof
+   * MutationTimeoutError` for timeouts, `instanceof MutationError` for app
+   * failures), `args` is the single arguments object the mutator was called
+   * with, `mutatorName` identifies the mutator, and `kind` tells you whether
+   * it was the client or server leg. Fires regardless of anything else — it is
+   * a pure observer. When there is no live server, only the client leg is
+   * tracked, so `kind` is always `"client"`. Typical uses: analytics, toasts,
+   * logging. When the composable comes from `createBindings`, the
+   * bindings-level `onError` fires too, after this one.
+   */
+  onError?: (info: { error: Error; args: TArgs; mutatorName: string; kind: MutationKind }) => void;
+  /**
+   * Observer called whenever a leg succeeds — a tracked promise resolved with
+   * `{type: 'success'}`. Receives `args`, the mutator's arguments object,
+   * `mutatorName`, and `kind` (`"client"` and, when there is a live server,
+   * `"server"` once the server acks). Zero mutations return no value, so there
+   * is no payload to carry — this fires purely as a success signal; re-read
+   * with `useQuery` if you need the written record. Like `onError` it is a
+   * pure observer. Fires before `onSettled`.
+   */
+  onSuccess?: (info: { args: TArgs; mutatorName: string; kind: MutationKind }) => void;
+  /**
+   * Observer called whenever a leg settles — whether it succeeded, timed out,
+   * or the mutation itself failed on that leg. Fires after `onError` on
+   * failure and after `onSuccess` on success, with `kind` identifying the leg.
+   * Receives `args` (the mutator's arguments object), `mutatorName`, `error`
+   * (set on failure/timeout, `undefined` on success), and `kind`. Like the
+   * other observers it is a pure observer. Useful for teardown/logging that
+   * runs on both success and failure paths.
+   */
+  onSettled?: (info: {
+    args: TArgs;
+    error?: Error;
+    mutatorName: string;
+    kind: MutationKind;
+  }) => void;
+};
+
 /**
- * Options for one `mutate` call. Passed as the trailing argument to `mutate`;
- * local values override the composable-level `UseMutationOptions` for that
- * call only.
- *
- * Detection rule: the final argument is treated as call options only when it
- * is a plain object whose keys are a subset of `timeout`, `throwOnTimeout`,
- * and `throwOnError` AND whose values match the expected types (number for
- * `timeout`, boolean for the flags). A payload that carries any other field,
- * or these names with different value types, is always passed through to the
- * mutation untouched. The one remaining ambiguity is a payload that consists
- * *exactly* of option keys with matching types (e.g. `{timeout: 5000}`) — it
- * is indistinguishable from options and is treated as options.
+ * Type constraint for the mutator a `useMutator` getter must return. Derived
+ * from Zero's own `Mutator` type (via `Pick`) so that a shape change on
+ * Zero's side — e.g. a renamed field or a restructured phantom — surfaces as
+ * a compile error here rather than a silent runtime break. We pick the
+ * structural fields (`mutatorName`, `fn`, the `~` phantom) and add our own
+ * bare callable rather than constraining to `Mutator<any, …>` outright:
+ * widening `TInput` to `any` collapses Zero's conditional callable signature
+ * to the zero-argument branch, which would reject concrete mutators (whose
+ * required-arg signature isn't assignable to it). The `~.$input` phantom
+ * carries the mutator's input type for typed reads.
  */
-export type MutationCallOptions = {
-  /** Max ms to wait for the tracked promise on this call; overrides `UseMutationOptions.timeout`. */
-  timeout?: number;
-  /** Reject this call's tracked promise when it exceeds `timeout`. */
-  throwOnTimeout?: boolean;
-  /** Reject this call's tracked promise when the mutation resolves with an error details object (default `true`). */
-  throwOnError?: boolean;
-};
+export type ZeroMutator = Pick<Mutator<any, any, any, any>, "mutatorName" | "fn" | "~"> &
+  ((...args: any[]) => unknown);
 
-/** Options for `useMutation`. */
-export type UseMutationOptions = {
-  /**
-   * Which promise of the `MutatorResult` to track: `'client'` (default) or
-   * `'server'`. `'server'` only settles once the server acknowledges the
-   * mutation, so with no server the timeout race is what keeps the composable
-   * from hanging.
-   */
-  awaitMode?: "client" | "server";
-  /**
-   * Default max ms to wait for the tracked promise (per `awaitMode`) before
-   * giving up. On timeout, `isPending` becomes `false`, `error` is set to a
-   * `MutationTimeoutError`, and that mutation's in-flight callbacks are
-   * invalidated. The underlying `MutatorResult.client`/`.server` promises are
-   * NOT cancelled (JS promises can't be cancelled) — only the composable's
-   * tracking stops. Default: `DEFAULT_MUTATION_TIMEOUT_MS` (5s). Pass
-   * `Infinity` to disable the timeout entirely. Overridable per call via
-   * `MutationCallOptions.timeout`.
-   */
-  timeout?: number;
-  /**
-   * Whether the promise returned by `mutate` should reject with a
-   * `MutationTimeoutError` when the tracked promise exceeds `timeout`.
-   * Default: `false` (the composable's `error` ref still reports it, but the
-   * call itself resolves/waits for the real promise). Overridable per call
-   * via `MutationCallOptions.throwOnTimeout`.
-   */
-  throwOnTimeout?: boolean;
-  /**
-   * Whether the promise returned by `mutate` should reject when the mutation
-   * resolves with an error details object (`{type: 'error', ...}`) — i.e. the
-   * mutation itself failed (custom mutator threw, zero error, …). Default:
-   * `true` — `await mutate(...)` throws on mutation errors, and the error is
-   * also reported via the `error` ref. Pass `false` to have the call resolve
-   * with the error details instead (the `error` ref still reports it).
-   * Genuine promise rejections always reject regardless of this flag.
-   * Overridable per call via `MutationCallOptions.throwOnError`.
-   */
-  throwOnError?: boolean;
-  /**
-   * Observer called whenever a mutation fails — either the tracked promise
-   * timed out or the mutation itself failed. Receives the same branded
-   * `Error` that is set as the composable's `error` ref at that moment:
-   * `instanceof MutationTimeoutError` when the tracked promise exceeded
-   * `timeout`, `instanceof MutationError` when the mutation itself failed
-   * (genuine rejections pass through as-is). Fires regardless of
-   * `throwOnTimeout`/`throwOnError` — it is a pure observer and does not
-   * change what `mutate` returns or what `error` holds. Typical uses:
-   * analytics, toasts, logging. When the composable comes from
-   * `createBindings`, the bindings-level `onMutationError` fires too, after
-   * this one.
-   */
-  onMutationError?: (error: Error) => void;
-};
-
-/** Return shape of `useMutation`. */
-export type MutationResult<TArgs extends unknown[]> = {
-  /** Execute the mutation. The final argument may be `MutationCallOptions`; local values override global options. */
-  mutate: (...args: [...TArgs, options?: MutationCallOptions]) => MutatorResult;
-  /** `true` while the tracked promise (client or server per `awaitMode`) is in flight. */
+/** Per-leg (client or server) status surface. */
+export type MutatorSideResult = {
   isPending: ComputedRef<boolean>;
-  /** `Error` if the mutation failed, `null` otherwise. Read-only computed. */
   error: ComputedRef<Error | null>;
-  /** Reset to idle state: clears `error`, sets `isPending` false, invalidates in-flight callbacks. */
+};
+
+/** Return shape of `useMutator`. */
+export type MutationResult<TArgs extends unknown[]> = {
+  /**
+   * Execute the mutation against the current zero. Returns the raw
+   * `MutatorResult` (`{ client, server }`); Zero normalizes both promises to
+   * resolve with `MutatorResultDetails`, so neither rejects under normal
+   * operation. When there is no live server, `server` is the *same* promise
+   * as `client` — awaiting either yields the client outcome.
+   */
+  mutate: (...args: TArgs) => MutatorResult;
+  /**
+   * `true` while either leg is in flight: the client leg, and — when there is
+   * a live server — the server leg. Read-only computed.
+   */
+  isPending: ComputedRef<boolean>;
+  /** First failure across either leg, `null` otherwise. Read-only computed. */
+  error: ComputedRef<Error | null>;
+  /** The client leg's own `isPending` / `error`. */
+  client: MutatorSideResult;
+  /**
+   * The server leg's own `isPending` / `error`. When there is no live server
+   * this mirrors `client` (the local write is authoritative — there is no
+   * separate server state to wait on).
+   */
+  server: MutatorSideResult;
+  /**
+   * Reset to idle state: clears `error` on both legs, sets `isPending` false,
+   * invalidates in-flight callbacks.
+   */
   reset: () => void;
 };
 
-/** Internal status of the latest tracked mutation. */
+/** Internal status of the latest tracked leg. */
 type MutationStatus = "idle" | "pending" | "error";
-
-/** The only keys a `MutationCallOptions` object may carry. */
-const MUTATION_CALL_OPTION_KEYS = new Set(["timeout", "throwOnTimeout", "throwOnError"]);
-
-/**
- * Decides whether the trailing `mutate` argument is call options or part of
- * the mutation payload. Strict on purpose: an object counts as options only
- * when every key is a known option key AND the values match the option types
- * (number for `timeout`, boolean for the flags). Anything else — extra
- * fields, wrong value types, empty objects — is a payload and passes through.
- */
-function isMutationCallOptions(value: unknown): value is MutationCallOptions {
-  if (typeof value !== "object" || value === null) return false;
-  const keys = Object.keys(value);
-  if (keys.length === 0 || !keys.every((key) => MUTATION_CALL_OPTION_KEYS.has(key))) {
-    return false;
-  }
-  const options = value as Record<string, unknown>;
-  if ("timeout" in options && typeof options.timeout !== "number") return false;
-  if ("throwOnTimeout" in options && typeof options.throwOnTimeout !== "boolean") return false;
-  if ("throwOnError" in options && typeof options.throwOnError !== "boolean") return false;
-  return true;
-}
 
 /**
  * A light TanStack-Query-style mutation wrapper for Zero mutations.
  *
- * Tracks a single mutation at a time: `isPending` is `true` while the tracked
- * promise (client or server per `awaitMode`) is in flight, and `error` holds
- * the failure if the mutation rejects or resolves with an error details
- * object.
+ * Tracks both the client and server legs of each mutation: `isPending` is
+ * `true` while either is in flight, and `error` holds the first failure.
+ * `client`/`server` give per-leg `isPending`/`error`, and the `onError` /
+ * `onSuccess` / `onSettled` observers receive a `kind` telling them which leg
+ * settled — so the composable reports exactly what is happening on each side
+ * instead of hiding the server's outcome.
  *
- * `mutationFn` returns a `MutateRequest` built from a mutator registry (e.g.
- * `mutators.addItem(item)`); the composable executes it against the current
- * zero via `zero.mutate(request)`, so the callback never captures a zero
- * externally — the zero (which may be reactive) is read at call time. The
- * returned `mutate` resolves with the resulting `MutatorResult`:
+ * `mutatorGetter` returns a `Mutator` from a mutator registry — a reference,
+ * *not* a call — e.g. `() => mutators.addItem`. The composable invokes the
+ * getter to obtain the mutator, executes it against the current zero via
+ * `zero.mutate(mutator(...args))`, and tracks the result. Because the getter
+ * returns the mutator itself, the selected mutator's argument type is
+ * inferred onto `mutate`: `mutators.addItem` takes `{id, name}`, so
+ * `mutate({id, name})`. The getter is evaluated per `mutate` call and never
+ * captures a zero externally — the zero (which may be reactive) is read at
+ * call time. `mutate` returns the raw `{ client, server }` `MutatorResult`;
+ * the composable's reactive state and observers do the tracking:
  *
  * ```ts
- * const { mutate, isPending, error } = useMutation(zero, (item) =>
- *   mutators.addItem(item),
- * );
+ * const { mutate, isPending, error, client, server } = useMutator(zero, () => mutators.addItem);
+ * mutate({ id: 1, name: "alpha" });
+ * // client.isPending → true, then false when the local write commits
+ * // server.isPending → true, then false when the server acks (if a server is live)
  * ```
  *
- * The bound `useMutation` from `createBindings` injects the shared reactive
- * zero (and optionally the mutator registry) the same way.
+ * The bound `useMutator` from `createBindings` injects the shared reactive
+ * zero and the mutator registry, so the getter receives the registry
+ * directly: `useMutator((mutators) => mutators.addItem)`.
  *
- * The tracked promise races against `options.timeout`
- * (`DEFAULT_MUTATION_TIMEOUT_MS` by default); on timeout `isPending` flips to
- * `false` and `error` becomes a `MutationTimeoutError`, while the underlying
- * `MutatorResult` promises are left to settle on their own.
+ * A "live server" is a configured (`zero.server !== null`) *and* currently
+ * connected (`zero.connection.state` is `connected`) backend. When there is
+ * no live server — none configured, or the app is offline — the server leg is
+ * never awaited: `mutate().server` is the client promise itself, `server`
+ * mirrors `client`, and only `kind: "client"` observers fire. This avoids
+ * hanging on a server promise that can never settle (offline or serverless).
+ * When a server is live, the server leg is tracked against the real server
+ * promise and reports its own outcome (and timeout).
  *
- * The promise returned by `mutate` is the tracked promise with the call's
- * throw policy applied: with `throwOnTimeout` (default `false`) it rejects
- * with a `MutationTimeoutError` on timeout, and with `throwOnError` (default
- * `true`) it rejects when the mutation resolves with error details — so by
- * default `await mutate(...)` throws when the mutation itself fails. Pass
- * `throwOnError: false` to resolve with the `MutatorResultDetails` (the
- * `error` ref still reports the failure either way). Options can be set
- * globally on `useMutation` or per call as the trailing `mutate` argument —
- * per-call values win.
+ * Each tracked leg races against `options.timeout`
+ * (`DEFAULT_MUTATION_TIMEOUT_MS` by default); on timeout that leg's
+ * `isPending` flips to `false` and its `error` becomes a `MutationTimeoutError`
+ * (surfaced via `onError`/`onSettled` with the leg's `kind`), while the
+ * underlying `MutatorResult` promises are left to settle on their own.
  *
- * `UseMutationOptions.onMutationError` observes every failure — timeouts and
- * mutation errors alike — receiving the same branded `Error` that is set on
- * the `error` ref (`instanceof MutationTimeoutError` vs `instanceof
- * MutationError` tells the two apart), without affecting the throw policy.
+ * `UseMutatorOptions.onError` observes every failure — timeouts and mutation
+ * errors alike — receiving a `{ error, args, mutatorName, kind }` info object:
+ * the same branded `Error` that is set on that leg's `error` ref
+ * (`instanceof MutationTimeoutError` vs `instanceof MutationError` tells the
+ * two apart), the mutator's arguments object, and which leg failed.
+ * `UseMutatorOptions.onSuccess` fires when a leg succeeds (with `{ args,
+ * kind }`), and `UseMutatorOptions.onSettled` fires on every settle (success
+ * or failure) with `{ args, error?, kind }`.
  */
-export function useMutation<
+export function useMutator<
   S extends BaseDefaultSchema = DefaultSchema,
   MD extends CustomMutatorDefs | undefined = undefined,
   C extends BaseDefaultContext = DefaultContext,
-  const TArgs extends unknown[] = [],
+  TMutator extends ZeroMutator = ZeroMutator,
 >(
   zeroInput: MaybeRefOrGetter<Zero<S, MD, C>>,
-  mutationFn: (...args: TArgs) => MutateRequest<any, S, C, any>,
-  options?: UseMutationOptions | (() => UseMutationOptions | undefined),
-): MutationResult<TArgs> {
+  mutatorGetter: () => TMutator,
+  options?:
+    | UseMutatorOptions<TMutator["~"]["$input"]>
+    | (() => UseMutatorOptions<TMutator["~"]["$input"]> | undefined),
+): MutationResult<Parameters<TMutator>> {
   const zero = computed(() => toValue(zeroInput));
   const optionsRef = computed(() => toValue(options));
-
-  const awaitMode = computed(() => optionsRef.value?.awaitMode ?? "client");
   const timeoutMs = computed(() => optionsRef.value?.timeout ?? DEFAULT_MUTATION_TIMEOUT_MS);
-  const throwOnTimeout = computed(() => optionsRef.value?.throwOnTimeout ?? false);
-  const throwOnError = computed(() => optionsRef.value?.throwOnError ?? true);
 
-  const _status = ref<MutationStatus>("idle");
-  const _error = ref<Error | null>(null);
+  // Per-leg status. The `server` surface mirrors the `client` surface while
+  // `serverStatus` is `null` (no live server — nothing to wait on), and only
+  // the client leg is tracked in that case.
+  const clientStatus = ref<MutationStatus>("idle");
+  const serverStatus = ref<MutationStatus | null>("idle");
+  const clientError = ref<Error | null>(null);
+  const serverError = ref<Error | null>(null);
+
+  // Whether a live server exists right now: configured (`zero.server !==
+  // null`) *and* connected. This is derived reactively — it is not stored
+  // directly. Each mutation snapshots it into `serverStatus` (`null` when not
+  // live), because the server surface must keep describing the in-flight
+  // mutation's server leg even if the connection state changes before it
+  // settles.
+  const serverLive = computed(
+    () => zero.value.server !== null && zero.value.connection.state.current.name === "connected",
+  );
 
   // Monotonic counter for the latest mutation. In-flight callbacks for older
-  // mutations are ignored, so an earlier promise's settlement can never
-  // clobber a newer mutation's state (or `reset`'s idle state).
+  // mutations are ignored, so an earlier leg's settlement can never clobber a
+  // newer mutation's state (or `reset`'s idle state).
   let mutationId = 0;
 
   // Timers of in-flight timeout races, cleared when the scope is disposed so
@@ -243,128 +271,174 @@ export function useMutation<
     });
   }
 
-  function mutate(...args: [...TArgs, options?: MutationCallOptions]): MutatorResult {
-    // A trailing MutationCallOptions object is split off; local values
-    // override the composable-level options for this call.
-    const last = args.length > 0 ? args[args.length - 1] : undefined;
-    const callOptions = isMutationCallOptions(last)
-      ? (args.pop() as MutationCallOptions)
-      : undefined;
+  function mutate(...args: Parameters<TMutator>): MutatorResult {
+    // Resolve the mutator from the getter, then invoke it with the caller's
+    // args to build the `MutateRequest`, which is executed against the
+    // current zero (read at call time so a reactive zero swap is honored).
+    // A synchronous throw (e.g. a falsy zero) propagates to the caller before
+    // any state is touched. The mutator is typed by the `ZeroMutator`
+    // constraint (which widens its return to `unknown`), and TS cannot narrow
+    // a variadic tuple to its prefix — hence the cast.
+    const mutator = mutatorGetter();
+    const request = mutator(...args) as MutateRequest<any, S, C, any>;
+    const result = zero.value.mutate(request);
 
-    // Invoke the user's fn first: a synchronous throw (e.g. a falsy zero)
-    // propagates to the caller before any state is touched. The returned
-    // `MutateRequest` is executed against the current zero, read at call time
-    // so a reactive zero swap is honored. (TS cannot narrow a variadic tuple
-    // to its prefix, hence the cast.)
-    const result = zero.value.mutate(mutationFn(...(args as unknown as TArgs)));
+    // Snapshot the reactive "is there a live server" decision at call time:
+    // when offline (or serverless) the server promise can never settle, so the
+    // server leg is not tracked and the returned `server` promise is the
+    // client promise itself — awaiting either yields the client outcome.
+    const live = serverLive.value;
 
     const id = ++mutationId;
-    _status.value = "pending";
-    _error.value = null;
+    // Zero mutators are arity-1 (the runtime callable is `(args) => …`), so
+    // `args` is a single-element tuple and `args[0]` is the mutator's
+    // arguments object — the `variables` surfaced to the callbacks. No tuple
+    // is ever exposed.
+    const variables = args[0] as TMutator["~"]["$input"];
+    const timeout = timeoutMs.value;
 
-    const timeout = callOptions?.timeout ?? timeoutMs.value;
-    const throwOnTimeoutCall = callOptions?.throwOnTimeout ?? throwOnTimeout.value;
-    const throwOnErrorCall = callOptions?.throwOnError ?? throwOnError.value;
+    clientStatus.value = "pending";
+    clientError.value = null;
+    serverStatus.value = live ? "pending" : null;
+    serverError.value = null;
 
-    const promise = awaitMode.value === "server" ? result.server : result.client;
-
-    let timerId: number | undefined;
-    let tracked: Promise<MutatorResultDetails>;
-    if (timeout === Infinity) {
-      tracked = promise;
-    } else {
-      const timer = new Promise<never>((_, reject) => {
-        const id = setTimeout(() => reject(new MutationTimeoutError(timeout)), timeout);
-        timerId = id;
-        pendingTimers.add(id);
-      });
-      tracked = Promise.race([promise, timer]);
-    }
-
-    // Failure reporting: sets the state refs and notifies the
-    // `UseMutationOptions.onMutationError` observer (composed by
-    // `createBindings` to also fire the bindings-level callback, local
-    // first). Observer throws are contained — they must not break the
+    // Failure reporting for a leg: sets its state refs and notifies the
+    // `UseMutatorOptions.onError` and `onSettled` observers (onError is
+    // composed by `createBindings` to also fire the bindings-level callback,
+    // local first). Observer throws are contained — they must not break the
     // tracking chain or double-fire via the catch handler.
-    const report = (error: Error) => {
-      _error.value = error;
-      _status.value = "error";
-      const callback = optionsRef.value?.onMutationError;
-      if (callback) {
+    const report = (kind: MutationKind, error: Error) => {
+      if (kind === "client") {
+        clientError.value = error;
+        clientStatus.value = "error";
+      } else {
+        serverError.value = error;
+        serverStatus.value = "error";
+      }
+      const opts = optionsRef.value;
+      const info = { args: variables, mutatorName: mutator.mutatorName, kind };
+      if (opts?.onError) {
         try {
-          callback(error);
+          opts.onError({ ...info, error });
         } catch (e) {
-          console.error("onMutationError callback threw", e);
+          console.error("onError callback threw", e);
+        }
+      }
+      if (opts?.onSettled) {
+        try {
+          opts.onSettled({ ...info, error });
+        } catch (e) {
+          console.error("onSettled callback threw", e);
         }
       }
     };
 
-    // Attach the tracking chain to `tracked` (never the bare `promise`), so
-    // the timeout race is observed and the timer rejection is always handled.
-    // The throw policy only shapes the returned promise, not this state
-    // tracking. Failures are branded so consumers can tell them apart:
-    // `MutationTimeoutError` for timeouts (only the race produces it),
-    // `MutationError` for resolved error details, as-is for genuine
-    // rejections.
-    tracked
-      .then((details) => {
-        if (disposed || id !== mutationId) return;
-        if (details.type === "error") {
-          report(new MutationError(details.error.message, { cause: details.error }));
+    // Success reporting for a leg: `onSuccess` fires first, then `onSettled`
+    // (with `error` undefined).
+    const succeed = (kind: MutationKind) => {
+      const opts = optionsRef.value;
+      const info = { args: variables, mutatorName: mutator.mutatorName, kind };
+      if (opts?.onSuccess) {
+        try {
+          opts.onSuccess(info);
+        } catch (e) {
+          console.error("onSuccess callback threw", e);
         }
-      })
-      .catch((e: unknown) => {
-        if (disposed || id !== mutationId) return;
-        report(e instanceof Error ? e : new Error(String(e)));
-      })
-      .finally(() => {
-        clearTimeout(timerId);
-        if (timerId !== undefined) {
-          pendingTimers.delete(timerId);
+      }
+      if (opts?.onSettled) {
+        try {
+          opts.onSettled(info);
+        } catch (e) {
+          console.error("onSettled callback threw", e);
         }
-        if (disposed || id !== mutationId) return;
-        if (_status.value === "pending") _status.value = "idle";
-      });
+      }
+    };
 
-    // The promise this call returns: the tracked promise with the throw
-    // policy applied. Timeout rejects the call only when throwOnTimeout is
-    // set; error-details reject only when throwOnError is set. Genuine
-    // rejections of the tracked promise always propagate.
-    let returned: Promise<MutatorResultDetails>;
-    if (throwOnTimeoutCall) {
-      returned = tracked.then((details) => {
-        if (throwOnErrorCall && details.type === "error") {
-          throw new MutationError(details.error.message, { cause: details.error });
-        }
-        return details;
-      });
-    } else if (throwOnErrorCall) {
-      returned = promise.then((details) => {
-        if (details.type === "error") {
-          throw new MutationError(details.error.message, { cause: details.error });
-        }
-        return details;
-      });
-    } else {
-      returned = promise;
-    }
+    // Track a single leg (client always; server only when live). Races the
+    // timeout so a never-settling promise (a hanging mutator, or a slow/offline
+    // server) still flips that leg's `isPending` and reports a
+    // `MutationTimeoutError` instead of hanging forever. Failures are branded
+    // so consumers can tell them apart: `MutationTimeoutError` for timeouts
+    // (only the race produces it), `MutationError` for resolved error details,
+    // as-is for genuine rejections.
+    const trackLeg = (kind: MutationKind, promise: Promise<MutatorResultDetails>) => {
+      let timerId: number | undefined;
+      let tracked: Promise<MutatorResultDetails>;
+      if (timeout === Infinity) {
+        tracked = promise;
+      } else {
+        const timer = new Promise<never>((_, reject) => {
+          const tid = setTimeout(() => reject(new MutationTimeoutError(timeout)), timeout);
+          timerId = tid;
+          pendingTimers.add(tid);
+        });
+        tracked = Promise.race([promise, timer]);
+      }
+      tracked
+        .then((details) => {
+          if (disposed || id !== mutationId) return;
+          if (details.type === "error") {
+            report(kind, new MutationError(details.error.message, { cause: details.error }));
+          } else {
+            succeed(kind);
+          }
+        })
+        .catch((e: unknown) => {
+          if (disposed || id !== mutationId) return;
+          report(kind, e instanceof Error ? e : new Error(String(e)));
+        })
+        .finally(() => {
+          clearTimeout(timerId);
+          if (timerId !== undefined) {
+            pendingTimers.delete(timerId);
+          }
+          if (disposed || id !== mutationId) return;
+          const status = kind === "client" ? clientStatus : serverStatus;
+          if (status.value === "pending") status.value = "idle";
+        });
+    };
 
-    if (awaitMode.value === "server") {
-      return { client: result.client, server: returned };
-    }
-    return { client: returned, server: result.server };
+    trackLeg("client", result.client);
+    if (live) trackLeg("server", result.server);
+
+    // Without a live server the server promise can never settle, so
+    // `mutate().server` is the client promise itself.
+    return live
+      ? { client: result.client, server: result.server }
+      : { client: result.client, server: result.client };
   }
 
   function reset() {
     mutationId++;
-    _status.value = "idle";
-    _error.value = null;
+    clientStatus.value = "idle";
+    clientError.value = null;
+    serverStatus.value = null;
+    serverError.value = null;
   }
+
+  const client: MutatorSideResult = {
+    isPending: computed(() => clientStatus.value === "pending"),
+    error: computed(() => clientError.value),
+  };
+  const server: MutatorSideResult = {
+    isPending: computed(() =>
+      serverStatus.value === null
+        ? clientStatus.value === "pending"
+        : serverStatus.value === "pending",
+    ),
+    error: computed(() => (serverStatus.value === null ? clientError.value : serverError.value)),
+  };
 
   return {
     mutate,
-    isPending: computed(() => _status.value === "pending"),
-    error: computed(() => _error.value),
+    isPending: computed(
+      () =>
+        clientStatus.value === "pending" ||
+        (serverStatus.value !== null && serverStatus.value === "pending"),
+    ),
+    error: computed(() => clientError.value ?? serverError.value),
+    client,
+    server,
     reset,
   };
 }

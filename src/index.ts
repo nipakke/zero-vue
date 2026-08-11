@@ -9,12 +9,13 @@ export {
   type UseQueryOptions,
 } from "./query.ts";
 export {
-  useMutation,
+  useMutator,
   MutationTimeoutError,
   MutationError,
   DEFAULT_MUTATION_TIMEOUT_MS,
-  type UseMutationOptions,
-  type MutationCallOptions,
+  type UseMutatorOptions,
   type MutationResult,
+  type MutatorSideResult,
+  type MutationKind,
 } from "./mutation.ts";
 export { VueView } from "./vue-view.ts";

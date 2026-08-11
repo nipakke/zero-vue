@@ -7,6 +7,7 @@ import {
   watch,
   type ComputedRef,
   type MaybeRefOrGetter,
+  toRaw,
   toValue,
 } from "vue";
 import {
@@ -65,7 +66,9 @@ export function useQuery<
   MD extends CustomMutatorDefs | undefined = undefined,
 >(
   zeroInput: MaybeRefOrGetter<Zero<TSchema, MD, TContext>>,
-  querySignal: () => QueryOrQueryRequest<TTable, TInput, TOutput, TSchema, TReturn, TContext>,
+  querySignal: MaybeRefOrGetter<
+    QueryOrQueryRequest<TTable, TInput, TOutput, TSchema, TReturn, TContext>
+  >,
   options?: UseQueryOptions | (() => UseQueryOptions | undefined),
 ): QueryResult<TReturn>;
 
@@ -82,9 +85,9 @@ export function useQuery<
   MD extends CustomMutatorDefs | undefined = undefined,
 >(
   zeroInput: MaybeRefOrGetter<Zero<TSchema, MD, TContext>>,
-  querySignal: () =>
-    | QueryOrQueryRequest<TTable, TInput, TOutput, TSchema, TReturn, TContext>
-    | Falsy,
+  querySignal: MaybeRefOrGetter<
+    QueryOrQueryRequest<TTable, TInput, TOutput, TSchema, TReturn, TContext> | Falsy
+  >,
   options?: UseQueryOptions | (() => UseQueryOptions | undefined),
 ): MaybeQueryResult<TReturn>;
 
@@ -101,9 +104,9 @@ export function useQuery<
   MD extends CustomMutatorDefs | undefined = undefined,
 >(
   z: MaybeRefOrGetter<Zero<TSchema, MD, TContext>>,
-  querySignal: () =>
-    | QueryOrQueryRequest<TTable, TInput, TOutput, TSchema, TReturn, TContext>
-    | Falsy,
+  querySignal: MaybeRefOrGetter<
+    QueryOrQueryRequest<TTable, TInput, TOutput, TSchema, TReturn, TContext> | Falsy
+  >,
   options?: UseQueryOptions | (() => UseQueryOptions | undefined),
 ): QueryResult<TReturn> | MaybeQueryResult<TReturn> {
   const zero = computed(() => toValue(z));
@@ -118,7 +121,10 @@ export function useQuery<
   };
 
   const resolvedQuery = computed(() => {
-    const raw = querySignal();
+    // `toRaw`: a caller may hold the query in a `ref`, which deep-reactivates
+    // it into a Proxy that breaks materialization. Strip any reactive wrapper
+    // so the underlying Query is used.
+    const raw = toRaw(toValue(querySignal));
     if (!raw) return undefined;
     return addContextToQuery(raw, zero.value.context);
   });

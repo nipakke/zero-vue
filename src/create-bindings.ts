@@ -5,7 +5,13 @@ import {
   type MaybeQueryResult,
   type UseQueryOptions,
 } from "./query.ts";
-import { useMutation, type MutationResult, type UseMutationOptions } from "./mutation.ts";
+import {
+  useMutator,
+  type MutationKind,
+  type MutationResult,
+  type UseMutatorOptions,
+  type ZeroMutator,
+} from "./mutation.ts";
 import { useConnectionState } from "./connection-state.ts";
 import type {
   BaseDefaultContext,
@@ -16,7 +22,6 @@ import type {
   DefaultSchema,
   Falsy,
   MutatorDefinitions,
-  MutateRequest,
   MutatorRegistry,
   PullRow,
   QueryDefinitions,
@@ -41,22 +46,15 @@ type BoundQueries<QD extends QueryDefinitions, S extends BaseDefaultSchema> = [Q
   : QueryRegistry<QD, S>;
 
 /**
- * The mutators argument to the returned `useMutation` callback. Resolves to
+ * The mutators argument to the returned `useMutator` getter. Resolves to
  * `never` when `createBindings` was called without a mutator registry, so the
- * mutators-taking form is only available when one was provided.
+ * registry-taking form is only available when one was provided.
  */
 type BoundMutators<MRD extends MutatorDefinitions, S extends BaseDefaultSchema> = [MRD] extends [
   never,
 ]
   ? never
   : MutatorRegistry<MRD, S>;
-
-/** Context injected into a bound `useMutation` callback — the bound mutator
- * registry. The callback returns a `MutateRequest` from this registry, which
- * the core composable executes against the shared zero. */
-type BoundMutationContext<MRD extends MutatorDefinitions, S extends BaseDefaultSchema> = {
-  readonly mutators: BoundMutators<MRD, S>;
-};
 
 /**
  * Creates a set of zero-bound composables for a given Zero instance.
@@ -76,28 +74,29 @@ type BoundMutationContext<MRD extends MutatorDefinitions, S extends BaseDefaultS
  *
  * When no registry is given, `useQuery` only takes the zero-argument getter form.
  *
- * The returned `useMutation` wraps the core `useMutation` with the shared zero
+ * The returned `useMutator` wraps the core `useMutator` with the shared zero
  * pre-bound. Pass a `{ mutators }` registry (from `defineMutators`) to inject
- * it into the mutation callback; the callback returns a `MutateRequest` from
- * that registry and the composable executes it against the shared zero:
+ * it into the mutator getter; the getter receives that registry and returns a
+ * `Mutator` (a reference, not a call), and the composable executes it against
+ * the shared zero. The selected mutator's argument type is inferred onto
+ * `mutate`:
  *
  * ```ts
- * const { useMutation } = createBindings(zero, { mutators });
- * const { mutate } = useMutation(({ mutators }, item) =>
- *   mutators.addItem(item),
- * );
+ * const { useMutator } = createBindings(zero, { mutators });
+ * const { mutate } = useMutator((mutators) => mutators.addItem);
+ * mutate({ id: 1, name: "alpha" });
  * ```
  *
  * The mutators registry must be the same one passed to the `Zero` constructor
  * (`new Zero({mutators, …})`) — Zero executes the mutators it was constructed
  * with, and the bindings registry only supplies the typed callback surface.
  *
- * Without a mutator registry the callback's context carries `mutators: never`;
- * return a `MutateRequest` from a registry you hold yourself:
+ * Without a mutator registry the getter's parameter is `never`; return a
+ * `Mutator` from a registry you hold yourself:
  *
  * ```ts
- * const { useMutation } = createBindings(zero);
- * const { mutate } = useMutation((_, item) => myMutators.addItem(item));
+ * const { useMutator } = createBindings(zero);
+ * const { mutate } = useMutator(() => myMutators.addItem);
  * ```
  *
  * The returned `useConnectionState` is the {@link useConnectionState}
@@ -128,14 +127,44 @@ export function createBindings<
     mutators?: MutatorRegistry<MRD, S>;
     /**
      * App-level mutation error observer, fired for every bound mutation's
-     * failure — good for analytics, logging, and telemetry. Receives the same
-     * branded `Error` as `UseMutationOptions.onMutationError` and the
-     * composable's `error` ref: `instanceof MutationTimeoutError` for
-     * timeouts, `instanceof MutationError` for mutation failures. Fires after
+     * failure — good for analytics, logging, and telemetry. Same shape and
+     * semantics as the per-composable `UseMutatorOptions.onError`: receives a
+     * `{ error, args, mutatorName }` info object (the same branded `Error`
+     * set on the composable's `error` ref — `instanceof MutationTimeoutError`
+     * for timeouts, `instanceof MutationError` for mutation failures — plus
+     * the mutator's arguments, typed `unknown` here because different bound
+     * mutators have different arg types, and the mutator's name). Fires after
      * the per-composable callback, if any; like the local one it is a pure
      * observer and never changes what `mutate` returns or what `error` holds.
      */
-    onMutationError?: (error: Error) => void;
+    onMutationError?: (info: {
+      error: Error;
+      args: unknown;
+      mutatorName: string;
+      kind: MutationKind;
+    }) => void;
+    /**
+     * App-level success observer, fired for every bound mutation that
+     * succeeds. Same shape and semantics as the per-composable
+     * `UseMutatorOptions.onSuccess`: receives `{ args, mutatorName }` (the
+     * mutator's arguments, typed `unknown` because different bound mutators
+     * have different arg types). Fires after the per-composable `onSuccess`,
+     * if any.
+     */
+    onMutationSuccess?: (info: { args: unknown; mutatorName: string; kind: MutationKind }) => void;
+    /**
+     * App-level settle observer, fired for every bound mutation that settles
+     * (success or failure). Same shape and semantics as the per-composable
+     * `UseMutatorOptions.onSettled`: receives `{ args, error?, mutatorName }`,
+     * with `error` set on failure/timeout and `undefined` on success. Fires
+     * after the per-composable `onSettled`, if any.
+     */
+    onMutationSettled?: (info: {
+      args: unknown;
+      error?: Error;
+      mutatorName: string;
+      kind: MutationKind;
+    }) => void;
   },
 ) {
   const sharedZero = computed(() => toValue(zero));
@@ -208,41 +237,50 @@ export function createBindings<
     );
   }
 
-  // The bound useMutation: wraps the core composable with the shared zero and
-  // injects the optional mutator registry into the callback context. The
-  // bindings-level `onMutationError` (if any) is composed into the options so
-  // both observers fire per failure — the local one first, then the global.
-  function mutation<const TArgs extends unknown[] = []>(
-    mutationFn: (
-      ctx: BoundMutationContext<MRD, S>,
-      ...args: TArgs
-    ) => MutateRequest<any, S, Context, any>,
-    options?: UseMutationOptions | (() => UseMutationOptions | undefined),
-  ): MutationResult<TArgs> {
-    // Compose the bindings-level observer with any per-composable one: the
-    // composed `onMutationError` is always present in the bound options and
-    // just optionally invokes the local and/or global callbacks.
-    const mergedOptions = (): UseMutationOptions | undefined => {
+  // The bound useMutator: wraps the core composable with the shared zero and
+  // injects the optional mutator registry into the getter, which returns a
+  // `Mutator` reference (not a call) so the selected mutator's argument type
+  // is inferred onto `mutate`. The bindings-level `onMutationError`/
+  // `onMutationSuccess`/`onMutationSettled` (if any) are composed into the
+  // options so both observers fire per failure/settle — the local one first,
+  // then the global.
+  function mutator<TMutator extends ZeroMutator = ZeroMutator>(
+    mutatorGetter: (mutators: BoundMutators<MRD, S>) => TMutator,
+    options?:
+      | UseMutatorOptions<TMutator["~"]["$input"]>
+      | (() => UseMutatorOptions<TMutator["~"]["$input"]> | undefined),
+  ): MutationResult<Parameters<TMutator>> {
+    // Compose the bindings-level observers with any per-composable ones: the
+    // composed `onError`, `onSuccess`, and `onSettled` are always present in
+    // the bound options and just optionally invoke the local and/or global
+    // callbacks (local first, then global).
+    const mergedOptions = (): UseMutatorOptions<TMutator["~"]["$input"]> | undefined => {
       const local = toValue(options);
-      const localOnError = local?.onMutationError;
+      const localOnError = local?.onError;
       const globalOnError = bindings?.onMutationError;
+      const localOnSuccess = local?.onSuccess;
+      const globalOnSuccess = bindings?.onMutationSuccess;
+      const localOnSettled = local?.onSettled;
+      const globalOnSettled = bindings?.onMutationSettled;
       return {
         ...local,
-        onMutationError: (error) => {
-          localOnError?.(error);
-          globalOnError?.(error);
+        onError: (info) => {
+          localOnError?.(info);
+          globalOnError?.(info);
+        },
+        onSuccess: (info) => {
+          localOnSuccess?.(info);
+          globalOnSuccess?.(info);
+        },
+        onSettled: (info) => {
+          localOnSettled?.(info);
+          globalOnSettled?.(info);
         },
       };
     };
-    return useMutation(
+    return useMutator(
       sharedZero,
-      (...args) =>
-        mutationFn(
-          {
-            mutators: bindings?.mutators as BoundMutators<MRD, S>,
-          },
-          ...args,
-        ),
+      () => mutatorGetter(bindings?.mutators as BoundMutators<MRD, S>),
       mergedOptions,
     );
   }
@@ -260,7 +298,7 @@ export function createBindings<
 
   return {
     useQuery: query,
-    useMutation: mutation,
+    useMutator: mutator,
     useConnectionState: connectionState,
     useZero: currentZero,
   };

@@ -20,6 +20,7 @@ jobs:
           cache: true
       - run: vp install
       - run: vp lint
+      - run: vp fmt --check
       - run: vp exec vue-tsc --noEmit
       - run: vp test run
       # Build + publint + attw gates (validates exports/types shape).
