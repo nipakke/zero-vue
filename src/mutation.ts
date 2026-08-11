@@ -23,10 +23,20 @@ import type {
 /** Default `UseMutatorOptions.timeout` — 5 seconds. */
 export const DEFAULT_MUTATION_TIMEOUT_MS = 5_000;
 
-/** Set as `error` when the tracked promise exceeds `timeout`. Checkable via `instanceof`. */
+/**
+ * Set as `error` when the tracked promise exceeds `timeout`. Checkable via
+ * `instanceof`. When the timeout was caused by `awaitMode: 'server'` on a
+ * zero with no server (`zero.server === null`), the message names that
+ * case — the server promise can never settle, so the timeout race is the only
+ * thing preventing a hang.
+ */
 export class MutationTimeoutError extends Error {
-  constructor(ms: number) {
-    super(`Mutation timed out after ${ms}ms`);
+  constructor(ms: number, serverless?: boolean) {
+    super(
+      serverless
+        ? `Mutation timed out after ${ms}ms: awaitMode "server" is set but the zero has no server (zero.server is null), so the server promise can never settle — the timeout race is the only way this resolves`
+        : `Mutation timed out after ${ms}ms`,
+    );
   }
 }
 
@@ -49,7 +59,10 @@ export type UseMutatorOptions<TArgs = unknown> = {
    * Which promise of the `MutatorResult` to track: `'client'` (default) or
    * `'server'`. `'server'` only settles once the server acknowledges the
    * mutation, so with no server the timeout race is what keeps the composable
-   * from hanging.
+   * from hanging. Issuing a `'server'` mutation against a zero with no server
+   * (`zero.server === null`) logs a one-time `console.warn` per composable,
+   * and the resulting timeout surfaces as a `MutationTimeoutError` whose
+   * message names the no-server case.
    */
   awaitMode?: "client" | "server";
   /**
@@ -230,6 +243,10 @@ export function useMutator<
   const pendingTimers = new Set<number>();
 
   let disposed = false;
+  // One-time dev-facing warning for the `awaitMode: 'server'` + no-server
+  // trap, so a misconfiguration surfaces immediately instead of only after
+  // the timeout fires (and isn't re-printed on every `mutate` call).
+  let warnedServerless = false;
   if (getCurrentScope()) {
     onScopeDispose(() => {
       disposed = true;
@@ -252,6 +269,19 @@ export function useMutator<
     const request = mutator(...args) as MutateRequest<any, S, C, any>;
     const result = zero.value.mutate(request);
 
+    // Detect the `awaitMode: 'server'` + no-server trap up front: with
+    // `zero.server === null` the server promise never settles, so warn once
+    // at call time (rather than only surfacing via the later timeout) and
+    // name the case in the timeout that follows.
+    const serverless = awaitMode.value === "server" && zero.value.server === null;
+    if (serverless && !warnedServerless) {
+      warnedServerless = true;
+      console.warn(
+        `[zero-vue] useMutator: awaitMode "server" with a zero that has no server (zero.server is null). ` +
+          `The server promise can never settle, so this mutation will time out after the configured timeout.`,
+      );
+    }
+
     const id = ++mutationId;
     _status.value = "pending";
     _error.value = null;
@@ -268,7 +298,7 @@ export function useMutator<
       tracked = promise;
     } else {
       const timer = new Promise<never>((_, reject) => {
-        const id = setTimeout(() => reject(new MutationTimeoutError(timeout)), timeout);
+        const id = setTimeout(() => reject(new MutationTimeoutError(timeout, serverless)), timeout);
         timerId = id;
         pendingTimers.add(id);
       });

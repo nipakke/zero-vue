@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vite-plus/test";
+import { describe, expect, test, vi } from "vite-plus/test";
 import {
   useMutator,
   MutationTimeoutError,
@@ -597,6 +597,7 @@ describe("useMutator", () => {
 
     // With `server: null` the server promise never settles, so the timeout
     // race is the observable behavior: `awaitMode: 'server'` must not hang.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { mutate, isPending, error } = useMutator(z, () => mutators.addItem, {
       awaitMode: "server",
       timeout: 50,
@@ -605,10 +606,38 @@ describe("useMutator", () => {
     mutate({ id: 3, name: "srv" });
     expect(isPending.value).toBe(true);
 
+    // The no-server trap is surfaced up front, at call time, not only via the
+    // later timeout.
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[0]).toContain("zero.server is null");
+
     await new Promise((r) => setTimeout(r, 100));
 
     expect(isPending.value).toBe(false);
     expect(error.value).toBeInstanceOf(MutationTimeoutError);
+    // The timeout error names the no-server case instead of a bare timeout.
+    expect(error.value?.message).toContain("zero.server is null");
+    warn.mockRestore();
+  });
+
+  test("awaitMode: 'server' on a serverless zero warns once across calls", async () => {
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+      mutators,
+    });
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { mutate } = useMutator(z, () => mutators.addItem, { awaitMode: "server", timeout: 50 });
+
+    mutate({ id: 4, name: "a" });
+    mutate({ id: 5, name: "b" });
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
   });
 });
 
