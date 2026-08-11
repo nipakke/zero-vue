@@ -7,6 +7,7 @@ import {
 } from "./query.ts";
 import {
   useMutator,
+  type MutationKind,
   type MutationResult,
   type UseMutatorOptions,
   type ZeroMutator,
@@ -136,7 +137,12 @@ export function createBindings<
      * the per-composable callback, if any; like the local one it is a pure
      * observer and never changes what `mutate` returns or what `error` holds.
      */
-    onMutationError?: (info: { error: Error; args: unknown; mutatorName: string }) => void;
+    onMutationError?: (info: {
+      error: Error;
+      args: unknown;
+      mutatorName: string;
+      kind: MutationKind;
+    }) => void;
     /**
      * App-level success observer, fired for every bound mutation that
      * succeeds. Same shape and semantics as the per-composable
@@ -145,7 +151,7 @@ export function createBindings<
      * have different arg types). Fires after the per-composable `onSuccess`,
      * if any.
      */
-    onMutationSuccess?: (info: { args: unknown; mutatorName: string }) => void;
+    onMutationSuccess?: (info: { args: unknown; mutatorName: string; kind: MutationKind }) => void;
     /**
      * App-level settle observer, fired for every bound mutation that settles
      * (success or failure). Same shape and semantics as the per-composable
@@ -153,7 +159,12 @@ export function createBindings<
      * with `error` set on failure/timeout and `undefined` on success. Fires
      * after the per-composable `onSettled`, if any.
      */
-    onMutationSettled?: (info: { args: unknown; error?: Error; mutatorName: string }) => void;
+    onMutationSettled?: (info: {
+      args: unknown;
+      error?: Error;
+      mutatorName: string;
+      kind: MutationKind;
+    }) => void;
   },
 ) {
   const sharedZero = computed(() => toValue(zero));

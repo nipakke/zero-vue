@@ -15,5 +15,7 @@ export {
   DEFAULT_MUTATION_TIMEOUT_MS,
   type UseMutatorOptions,
   type MutationResult,
+  type MutatorSideResult,
+  type MutationKind,
 } from "./mutation.ts";
 export { VueView } from "./vue-view.ts";
