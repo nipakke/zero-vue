@@ -43,7 +43,6 @@
     "test": "vp test run",
     "test:watch": "vp test",
     "version": "changeset version",
-    "publish": "changeset publish",
     "check-types": "vue-tsc --noEmit",
     "check:playground": "pnpm build && pnpm --filter @zero-vue/playground typecheck",
     "playground": "pnpm --filter @zero-vue/playground dev",
