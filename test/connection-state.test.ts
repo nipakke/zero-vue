@@ -11,9 +11,18 @@ const schema = createSchema({
   enableLegacyMutators: true,
 });
 
+// Silence Zero's "no server URL" startup log (each test spins up a Zero).
+const silentLogSink = { log: () => {} };
+
 describe("useConnectionState", () => {
   test("returns a connection state object on mount", async () => {
-    const z = new Zero({ server: null, userID: "test", schema, kvStore: "mem" });
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+    });
 
     let capturedState: unknown;
 
@@ -37,8 +46,20 @@ describe("useConnectionState", () => {
   test("reacts to a swapped reactive zero", async () => {
     // useConnectionState should unsubscribe from the old Zero and subscribe
     // to the new one when the reactive zero changes.
-    const zeroA = new Zero({ server: null, userID: "a", schema, kvStore: "mem" });
-    const zeroB = new Zero({ server: null, userID: "b", schema, kvStore: "mem" });
+    const zeroA = new Zero({
+      server: null,
+      userID: "a",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+    });
+    const zeroB = new Zero({
+      server: null,
+      userID: "b",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+    });
     const zeroRef = shallowRef(zeroA);
 
     let capturedName: string | undefined;
@@ -69,7 +90,13 @@ describe("useConnectionState", () => {
   });
 
   test("createBindings exposes bound useConnectionState and useZero", async () => {
-    const z = new Zero({ server: null, userID: "test", schema, kvStore: "mem" });
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+    });
     const { useConnectionState, useZero } = createBindings(z);
 
     let capturedState: unknown;

@@ -7,12 +7,21 @@ const schema = createSchema({
   enableLegacyMutators: true,
 });
 
-const rows = (data: unknown) => JSON.parse(JSON.stringify(data));
+const zql = createBuilder(schema);
+
+// Silence Zero's "no server URL" startup log (each test spins up a Zero).
+const silentLogSink = { log: () => {} };
 
 describe("VueView", () => {
   test("exposes reactive data, status, and error from a materialized view", async () => {
-    const z = new Zero({ server: null, userID: "test", schema, kvStore: "mem" });
-    const query = createBuilder(schema).item;
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+    });
+    const query = zql.item;
 
     const view = z.materialize(query, vueViewFactory) as VueView<unknown>;
 
@@ -22,52 +31,98 @@ describe("VueView", () => {
 
     await z.mutate.item.insert({ id: 1, name: "foo" });
 
-    expect(rows(view.data.value)).toEqual([{ id: 1, name: "foo" }]);
+    expect(view.data.value).toMatchInlineSnapshot(`
+      [
+        {
+          "id": 1,
+          "name": "foo",
+          Symbol(rc): 1,
+        },
+      ]
+    `);
     // Local-only zero never completes a sync (server: null), so status stays 'unknown'.
     expect(view.status.value).toBe("unknown");
     view.destroy();
   });
 
   test("stops updating after destroy", async () => {
-    const z = new Zero({ server: null, userID: "test", schema, kvStore: "mem" });
-    const query = createBuilder(schema).item;
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+    });
+    const query = zql.item;
 
     const view = z.materialize(query, vueViewFactory) as VueView<unknown>;
     view.destroy();
 
     await z.mutate.item.insert({ id: 1, name: "foo" });
 
-    expect(rows(view.data.value)).toEqual([]);
+    expect(view.data.value).toMatchInlineSnapshot(`[]`);
   });
 
   test("supports TTL updates", async () => {
-    const z = new Zero({ server: null, userID: "test", schema, kvStore: "mem" });
-    const query = createBuilder(schema).item;
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+    });
+    const query = zql.item;
 
     const view = z.materialize(query, vueViewFactory) as VueView<unknown>;
     view.updateTTL("10m");
 
     await z.mutate.item.insert({ id: 1, name: "foo" });
 
-    expect(rows(view.data.value)).toEqual([{ id: 1, name: "foo" }]);
+    expect(view.data.value).toMatchInlineSnapshot(`
+      [
+        {
+          "id": 1,
+          "name": "foo",
+          Symbol(rc): 1,
+        },
+      ]
+    `);
     view.destroy();
   });
 
   test("handles singular queries as a single row", async () => {
-    const z = new Zero({ server: null, userID: "test", schema, kvStore: "mem" });
-    const query = createBuilder(schema).item.one();
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+    });
+    const query = zql.item.one();
 
     const view = z.materialize(query, vueViewFactory) as VueView<unknown>;
 
     await z.mutate.item.insert({ id: 1, name: "foo" });
 
-    expect(rows(view.data.value)).toEqual({ id: 1, name: "foo" });
+    expect(view.data.value).toMatchInlineSnapshot(`
+      {
+        "id": 1,
+        "name": "foo",
+        Symbol(rc): 1,
+      }
+    `);
     view.destroy();
   });
 
   test("handles empty singular queries as undefined", async () => {
-    const z = new Zero({ server: null, userID: "test", schema, kvStore: "mem" });
-    const query = createBuilder(schema).item.one();
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+    });
+    const query = zql.item.one();
 
     const view = z.materialize(query, vueViewFactory) as VueView<unknown>;
 
@@ -115,8 +170,14 @@ describe("VueView", () => {
     // The switch in changeToViewChange covers ChangeType 0-3 (ADD, REMOVE,
     // EDIT, CHILD). The default branch throws so a future Zero ChangeType
     // addition is a loud failure, not silent view corruption.
-    const z = new Zero({ server: null, userID: "test", schema, kvStore: "mem" });
-    const query = createBuilder(schema).item;
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+    });
+    const query = zql.item;
     const view = z.materialize(query, vueViewFactory) as VueView<unknown>;
 
     // Construct a change tuple with an invalid type code and push it.

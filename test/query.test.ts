@@ -18,13 +18,24 @@ const schema = createSchema({
   enableLegacyMutators: true,
 });
 
+const zql = createBuilder(schema);
+
+// Silence Zero's "no server URL" startup log (each test spins up a Zero).
+const silentLogSink = { log: () => {} };
+
 describe("useQuery", () => {
   test("returns query results for locally stored data", async () => {
-    const z = new Zero({ server: null, userID: "test", schema, kvStore: "mem" });
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+    });
     await z.mutate.item.insert({ id: 1, name: "alpha" });
     await z.mutate.item.insert({ id: 2, name: "beta" });
 
-    const query = createBuilder(schema).item;
+    const query = zql.item;
     const { data: rows } = useQuery(z, () => query);
 
     expect(rows.value).toMatchInlineSnapshot(`
@@ -44,22 +55,82 @@ describe("useQuery", () => {
   });
 
   test("reactively updates when data is inserted after query creation", async () => {
-    const z = new Zero({ server: null, userID: "test", schema, kvStore: "mem" });
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+    });
 
-    const query = createBuilder(schema).item;
+    const query = zql.item;
     const { data: rows } = useQuery(z, () => query);
 
     // Insert after the query is live
     await z.mutate.item.insert({ id: 10, name: "inserted-later" });
 
-    expect(JSON.parse(JSON.stringify(rows.value))).toContainEqual({
-      id: 10,
-      name: "inserted-later",
+    expect(rows.value).toMatchInlineSnapshot(`
+      [
+        {
+          "id": 10,
+          "name": "inserted-later",
+          Symbol(rc): 1,
+        },
+      ]
+    `);
+  });
+
+  test("accepts querySignal as a MaybeRefOrGetter (ref or value, not just getter)", async () => {
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
     });
+    await z.mutate.item.insert({ id: 1, name: "alpha" });
+
+    // Direct value (no wrapper) and ref both work. A `ref` deep-reactivates
+    // the query into a Proxy, so useQuery must strip it via `toRaw`.
+    const query = zql.item;
+    const queryRef = ref(query);
+    const byRef = useQuery(z, queryRef);
+    const byValue = useQuery(z, query);
+
+    expect(byRef.data.value).toMatchInlineSnapshot(`
+      [
+        {
+          "id": 1,
+          "name": "alpha",
+          Symbol(rc): 1,
+        },
+      ]
+    `);
+    expect(byValue.data.value).toMatchInlineSnapshot(`
+      [
+        {
+          "id": 1,
+          "name": "alpha",
+          Symbol(rc): 1,
+        },
+      ]
+    `);
+
+    // Swapping the ref to a falsy value disables the query.
+    queryRef.value = undefined as never;
+    await nextTick();
+    expect(byRef.data.value).toBeUndefined();
+    expect(byRef.status.value).toBe("disabled");
   });
 
   test("returns undefined data and disabled status for falsy/disabled query", async () => {
-    const z = new Zero({ server: null, userID: "test", schema, kvStore: "mem" });
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+    });
 
     const { data: rows, status, error } = useQuery(z, () => undefined as never);
 
@@ -69,7 +140,13 @@ describe("useQuery", () => {
   });
 
   test("surfaces an unhashable query as error status, not disabled", async () => {
-    const z = new Zero({ server: null, userID: "test", schema, kvStore: "mem" });
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+    });
 
     // A query object that does not carry Zero's queryInternals tag (e.g. one
     // built against a different copy of Zero) cannot be hashed. Regression:
@@ -86,50 +163,100 @@ describe("useQuery", () => {
 
 describe("createBindings", () => {
   test("binds a static zero and returns query results", async () => {
-    const z = new Zero({ server: null, userID: "test", schema, kvStore: "mem" });
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+    });
     await z.mutate.item.insert({ id: 1, name: "alpha" });
     await z.mutate.item.insert({ id: 2, name: "beta" });
 
     const { useQuery } = createBindings(z);
-    const { data: rows } = useQuery(() => createBuilder(schema).item);
+    const { data: rows } = useQuery(() => zql.item);
 
-    expect(JSON.parse(JSON.stringify(rows.value))).toEqual([
-      { id: 1, name: "alpha" },
-      { id: 2, name: "beta" },
-    ]);
+    expect(rows.value).toMatchInlineSnapshot(`
+      [
+        {
+          "id": 1,
+          "name": "alpha",
+          Symbol(rc): 1,
+        },
+        {
+          "id": 2,
+          "name": "beta",
+          Symbol(rc): 1,
+        },
+      ]
+    `);
   });
 
   test("reactively re-materializes against a swapped reactive zero", async () => {
-    const zeroA = new Zero({ server: null, userID: "test", schema, kvStore: "mem" });
+    const zeroA = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+    });
     await zeroA.mutate.item.insert({ id: 1, name: "from-a" });
 
     const zeroRef = shallowRef<typeof zeroA>(zeroA);
     const { useQuery } = createBindings(zeroRef);
-    const { data: rows } = useQuery(() => createBuilder(schema).item);
+    const { data: rows } = useQuery(() => zql.item);
 
     // Initially reflects zeroA.
-    expect(JSON.parse(JSON.stringify(rows.value))).toEqual([{ id: 1, name: "from-a" }]);
+    expect(rows.value).toMatchInlineSnapshot(`
+      [
+        {
+          "id": 1,
+          "name": "from-a",
+          Symbol(rc): 1,
+        },
+      ]
+    `);
 
     // Swap to a fresh zero holding a different row: the old view is torn down
     // and a new one is materialized against zeroB.
-    const zeroB = new Zero({ server: null, userID: "test", schema, kvStore: "mem" });
+    const zeroB = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+    });
     await zeroB.mutate.item.insert({ id: 99, name: "from-b" });
 
     zeroRef.value = zeroB;
     await nextTick();
 
-    expect(JSON.parse(JSON.stringify(rows.value))).toEqual([{ id: 99, name: "from-b" }]);
+    expect(rows.value).toMatchInlineSnapshot(`
+      [
+        {
+          "id": 99,
+          "name": "from-b",
+          Symbol(rc): 1,
+        },
+      ]
+    `);
   });
 
   test("re-materializes the registry-getter form against a swapped reactive zero", async () => {
-    const zeroA = new Zero({ server: null, userID: "test", schema, kvStore: "mem" });
+    const zeroA = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+    });
     await zeroA.mutate.item.insert({ id: 1, name: "from-a" });
 
     // Same registry path as the registry-getter test, but with a reactive
     // zero so the swap path re-resolves the query through the bound registry
     // against the new instance.
     const queries = defineQueries({
-      all: defineQuery(() => createBuilder(schema).item),
+      all: defineQuery(() => zql.item),
     });
 
     const zeroRef = shallowRef<typeof zeroA>(zeroA);
@@ -137,20 +264,48 @@ describe("createBindings", () => {
     const { data: rows } = useQuery((q) => q.all());
 
     // Initially reflects zeroA.
-    expect(JSON.parse(JSON.stringify(rows.value))).toEqual([{ id: 1, name: "from-a" }]);
+    expect(rows.value).toMatchInlineSnapshot(`
+      [
+        {
+          "id": 1,
+          "name": "from-a",
+          Symbol(rc): 1,
+        },
+      ]
+    `);
 
     // Swap to a fresh zero holding a different row.
-    const zeroB = new Zero({ server: null, userID: "test", schema, kvStore: "mem" });
+    const zeroB = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+    });
     await zeroB.mutate.item.insert({ id: 99, name: "from-b" });
 
     zeroRef.value = zeroB;
     await nextTick();
 
-    expect(JSON.parse(JSON.stringify(rows.value))).toEqual([{ id: 99, name: "from-b" }]);
+    expect(rows.value).toMatchInlineSnapshot(`
+      [
+        {
+          "id": 99,
+          "name": "from-b",
+          Symbol(rc): 1,
+        },
+      ]
+    `);
   });
 
   test("returns undefined data and disabled status for falsy/disabled query", async () => {
-    const z = new Zero({ server: null, userID: "test", schema, kvStore: "mem" });
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+    });
 
     const { useQuery } = createBindings(z);
     const { data: rows, status, error } = useQuery(() => undefined as never);
@@ -161,26 +316,46 @@ describe("createBindings", () => {
   });
 
   test("binds a query registry and resolves queries via a registry getter", async () => {
-    const z = new Zero({ server: null, userID: "test", schema, kvStore: "mem" });
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+    });
     await z.mutate.item.insert({ id: 1, name: "alpha" });
     await z.mutate.item.insert({ id: 2, name: "beta" });
 
-    const zql = createBuilder(schema);
     const queries = defineQueries({
       all: defineQuery(() => zql.item),
     });
 
     const { useQuery } = createBindings(z, { queries });
     const { data: rows } = useQuery((q) => q.all());
-
-    expect(JSON.parse(JSON.stringify(rows.value))).toEqual([
-      { id: 1, name: "alpha" },
-      { id: 2, name: "beta" },
-    ]);
+    expect(rows.value).toMatchInlineSnapshot(`
+      [
+        {
+          "id": 1,
+          "name": "alpha",
+          Symbol(rc): 1,
+        },
+        {
+          "id": 2,
+          "name": "beta",
+          Symbol(rc): 1,
+        },
+      ]
+    `);
   });
 
   test("registry getter form is rejected when no registry is bound", () => {
-    const z = new Zero({ server: null, userID: "test", schema, kvStore: "mem" });
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+    });
     const { useQuery } = createBindings(z);
 
     // Without a registry the signal is zero-argument, so a registry-taking
@@ -192,7 +367,7 @@ describe("createBindings", () => {
     expect(_rejected).toBeTypeOf("function");
 
     // The zero-argument form still works.
-    useQuery(() => createBuilder(schema).item);
+    useQuery(() => zql.item);
   });
 });
 
@@ -201,61 +376,119 @@ describe("useQuery — TTL and lifecycle", () => {
     // Regression: the re-materialization watch used to capture initialTTL at
     // setup time and always pass that to materialize, so changing TTL then
     // changing the query signal lost the TTL override.
-    const z = new Zero({ server: null, userID: "test", schema, kvStore: "mem" });
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+    });
     await z.mutate.item.insert({ id: 1, name: "alpha" });
 
     const filter = ref<"all" | "one">("all");
     const ttlRef = ref<UseQueryOptions["ttl"]>("1h");
 
     const querySignal = () => {
-      const base = createBuilder(schema).item;
+      const base = zql.item;
       return filter.value === "all" ? base : base.where("id", 1);
     };
 
     const { data: rows } = useQuery(z, querySignal, () => ({ ttl: ttlRef.value }));
-    expect(JSON.parse(JSON.stringify(rows.value))).toEqual([{ id: 1, name: "alpha" }]);
+    expect(rows.value).toMatchInlineSnapshot(`
+      [
+        {
+          "id": 1,
+          "name": "alpha",
+          Symbol(rc): 1,
+        },
+      ]
+    `);
 
     // Change the query signal — forces re-materialization.
     // The new view should be created with ttl='1h', not the default 5m.
     filter.value = "one";
     await nextTick();
 
-    expect(JSON.parse(JSON.stringify(rows.value))).toEqual([{ id: 1, name: "alpha" }]);
+    expect(rows.value).toMatchInlineSnapshot(`
+      [
+        {
+          "id": 1,
+          "name": "alpha",
+          Symbol(rc): 1,
+        },
+      ]
+    `);
   });
 
   test("tears the view down when the enclosing effectScope is disposed", async () => {
     // Regression: cleanup used to be registered only when inside a component
     // (getCurrentInstance), so a query in an effectScope (e.g. a store) never
     // destroyed its view after the scope stopped.
-    const z = new Zero({ server: null, userID: "test", schema, kvStore: "mem" });
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+    });
     await z.mutate.item.insert({ id: 1, name: "alpha" });
 
-    const query = createBuilder(schema).item;
+    const query = zql.item;
     let rows: { value: unknown } | undefined;
 
     const scope = effectScope();
     scope.run(() => {
       rows = useQuery(z, () => query).data;
     });
-    expect(JSON.parse(JSON.stringify(rows!.value))).toEqual([{ id: 1, name: "alpha" }]);
+    expect(rows!.value).toMatchInlineSnapshot(`
+      [
+        {
+          "id": 1,
+          "name": "alpha",
+          Symbol(rc): 1,
+        },
+      ]
+    `);
 
     scope.stop();
 
     // After disposal the destroyed view must not receive updates.
     await z.mutate.item.insert({ id: 2, name: "beta" });
     await nextTick();
-    expect(JSON.parse(JSON.stringify(rows!.value))).toEqual([{ id: 1, name: "alpha" }]);
+    expect(rows!.value).toMatchInlineSnapshot(`
+      [
+        {
+          "id": 1,
+          "name": "alpha",
+          Symbol(rc): 1,
+        },
+      ]
+    `);
   });
 
   test("works outside a component (no onUnmounted guard)", async () => {
     // getCurrentScope() returns null outside setup()/effectScope(); useQuery
     // must not register onScopeDispose and must still deliver data.
-    const z = new Zero({ server: null, userID: "test", schema, kvStore: "mem" });
+    const z = new Zero({
+      server: null,
+      userID: "test",
+      schema,
+      kvStore: "mem",
+      logSink: silentLogSink,
+    });
     await z.mutate.item.insert({ id: 1, name: "alpha" });
 
-    const query = createBuilder(schema).item;
+    const query = zql.item;
     const { data: rows } = useQuery(z, () => query);
 
-    expect(JSON.parse(JSON.stringify(rows.value))).toEqual([{ id: 1, name: "alpha" }]);
+    expect(rows.value).toMatchInlineSnapshot(`
+      [
+        {
+          "id": 1,
+          "name": "alpha",
+          Symbol(rc): 1,
+        },
+      ]
+    `);
   });
 });

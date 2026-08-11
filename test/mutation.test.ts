@@ -22,6 +22,8 @@ const schema = createSchema({
   enableLegacyMutators: true,
 });
 
+const zql = createBuilder(schema);
+
 // Registry mutators are executed by the Zero they were passed to, so every
 // zero in these tests is constructed with the same registry that the
 // composables bind.
@@ -58,9 +60,6 @@ const mutators = defineMutatorsWithSchema({
 // Args captured by the `record` mutator, for payload pass-through assertions.
 const receivedArgs: unknown[] = [];
 
-// Strips the `Symbol(rc)` row-context symbols Zero attaches to rows.
-const rows = (d: unknown) => JSON.parse(JSON.stringify(d)) as { id: number; name: string }[];
-
 // Flushes the microtask queue (the tracking chain runs after the awaited
 // client promise's own handlers), so state assertions see the settled result.
 const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -93,7 +92,15 @@ describe("useMutator", () => {
 
     expect(isPending.value).toBe(false);
     expect(error.value).toBeNull();
-    expect(rows(await z.run(createBuilder(schema).item))).toEqual([{ id: 1, name: "alpha" }]);
+    expect(await z.run(zql.item)).toMatchInlineSnapshot(`
+      [
+        {
+          "id": 1,
+          "name": "alpha",
+          Symbol(rc): 1,
+        },
+      ]
+    `);
   });
 
   test("surfaces a timed-out tracked promise in error", async () => {
@@ -513,7 +520,15 @@ describe("useMutator", () => {
 
     expect(error.value).toBeNull();
     expect(receivedArgs).toEqual([{ id: 7, name: "timed", timeout: 123 }]);
-    expect(rows(await z.run(createBuilder(schema).item))).toEqual([{ id: 7, name: "timed" }]);
+    expect(await z.run(zql.item)).toMatchInlineSnapshot(`
+      [
+        {
+          "id": 7,
+          "name": "timed",
+          Symbol(rc): 1,
+        },
+      ]
+    `);
   });
 
   test("passes a payload whose option-named keys have the wrong value types", async () => {
@@ -559,7 +574,15 @@ describe("useMutator", () => {
     await flush();
 
     expect(isPending.value).toBe(false);
-    expect(rows(await z.run(createBuilder(schema).item))).toEqual([{ id: 9, name: "outside" }]);
+    expect(await z.run(zql.item)).toMatchInlineSnapshot(`
+      [
+        {
+          "id": 9,
+          "name": "outside",
+          Symbol(rc): 1,
+        },
+      ]
+    `);
   });
 
   test("awaitMode: 'server' races the server promise", async () => {
@@ -608,7 +631,15 @@ describe("createBindings", () => {
     await flush();
 
     expect(isPending.value).toBe(false);
-    expect(rows(await z.run(createBuilder(schema).item))).toEqual([{ id: 6, name: "bound" }]);
+    expect(await z.run(zql.item)).toMatchInlineSnapshot(`
+      [
+        {
+          "id": 6,
+          "name": "bound",
+          Symbol(rc): 1,
+        },
+      ]
+    `);
   });
 
   test("bound useMutator with a mutator registry", async () => {
@@ -629,9 +660,15 @@ describe("createBindings", () => {
     await flush();
 
     expect(isPending.value).toBe(false);
-    expect(rows(await z.run(createBuilder(schema).item))).toEqual([
-      { id: 1, name: "from-registry" },
-    ]);
+    expect(await z.run(zql.item)).toMatchInlineSnapshot(`
+      [
+        {
+          "id": 1,
+          "name": "from-registry",
+          Symbol(rc): 1,
+        },
+      ]
+    `);
   });
 
   test("bound useMutator applies composable options", async () => {
