@@ -50,6 +50,5 @@ jobs:
         with:
           commit: "chore: update versions"
           title: "chore: release packages"
-          publish: vp pm changeset publish
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
