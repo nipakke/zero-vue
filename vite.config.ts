@@ -5,7 +5,12 @@ export default defineConfig({
     environment: "jsdom",
     include: ["test/**/*.test.ts"],
   },
-  fmt: {},
+  fmt: {
+    // Changesets owns these files (generated CHANGELOG.md + consumed
+    // .changeset/*.md) and doesn't run the formatter, so exclude them from
+    // formatting and from `vp fmt --check` in CI.
+    ignorePatterns: ["CHANGELOG.md", ".changeset/**"],
+  },
   lint: {
     options: { typeAware: true, typeCheck: true },
     // The playground is a consumer app; it typechecks against the built
