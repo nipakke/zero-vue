@@ -9,7 +9,7 @@
   },
   "dependencies": {
     "@nipakke/zero-vue": "workspace:*",
-    "@rocicorp/zero": "^1.8.0",
+    "@rocicorp/zero": "^1.9.0",
     "vue": "^3.5.0"
   },
   "devDependencies": {

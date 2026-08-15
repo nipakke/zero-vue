@@ -12,7 +12,7 @@ A Vue 3 wrapper around [Zero](https://zero.rocicorp.dev/) — query local, offli
 pnpm add @nipakke/zero-vue @rocicorp/zero vue
 ```
 
-`vue` (`^3.3.0`) and `@rocicorp/zero` (`>=1.7.0 <1.9.0`) are peer dependencies.
+`vue` (`^3.3.0`) and `@rocicorp/zero` (`>=1.7.0 <1.10.0`) are peer dependencies.
 
 ## Example
 

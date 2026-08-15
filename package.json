@@ -53,7 +53,7 @@
   "devDependencies": {
     "@arethetypeswrong/core": "^0.18.5",
     "@changesets/cli": "^2.31.1",
-    "@rocicorp/zero": "^1.8.0",
+    "@rocicorp/zero": "^1.9.0",
     "@vitejs/plugin-vue": "^6.0.8",
     "@vitest/coverage-v8": "4.1.10",
     "@vitest/ui": "4.1.10",
@@ -68,7 +68,7 @@
     "vue-tsc": "^2.2.12"
   },
   "peerDependencies": {
-    "@rocicorp/zero": ">=1.7.0 <1.9.0",
+    "@rocicorp/zero": ">=1.7.0 <1.10.0",
     "vue": "^3.3.0"
   },
   "devEngines": {
