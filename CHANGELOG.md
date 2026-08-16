@@ -1,5 +1,11 @@
 # @nipakke/zero-vue
 
+## 0.3.1
+
+### Patch Changes
+
+- a21cbaf: Support @rocicorp/zero 1.9: widen the peer dependency range to `>=1.7.0 <1.10.0` and test against 1.9.0.
+
 ## 0.3.0
 
 ### Minor Changes
